@@ -118,18 +118,24 @@ export default function NewItemPage() {
         uploadedUrls.push(publicUrlData.publicUrl);
       }
 
-      const { error: insertError } = await supabase.from('items').insert({
-        user_id: userId,
-        title: title.trim(),
-        category,
-        rarity,
-        wanted_items: wantedItems.trim(),
-        description: description.trim(),
-        images: uploadedUrls,
-        status: 'active',
+      // 改由後端 API 檢查帳號 + IP 每日限發 1 篇並寫入 48 小時到期時間
+      const response = await fetch('/api/items', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: title.trim(),
+          category,
+          rarity,
+          wanted_items: wantedItems.trim(),
+          description: description.trim(),
+          images: uploadedUrls,
+        }),
       });
 
-      if (insertError) throw insertError;
+      const result = await response.json();
+      if (!response.ok) {
+        throw new Error(result.error || '發布失敗');
+      }
 
       router.push('/');
       router.refresh();

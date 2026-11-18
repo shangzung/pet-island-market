@@ -4,7 +4,21 @@ import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import { RarityBadge, RarityType } from '@/components/RarityBadge';
-import { Search, Plus, LogOut, User, Sparkles, Image as ImageIcon } from 'lucide-react';
+import {
+  Search,
+  Plus,
+  LogOut,
+  User,
+  Sparkles,
+  Image as ImageIcon,
+  Trash2,
+  MessageCircle,
+  Bell,
+  Clock,
+  X,
+  Send,
+  ShieldCheck,
+} from 'lucide-react';
 
 const CATEGORIES = [
   { id: 'all', label: '全部' },
@@ -22,6 +36,9 @@ const RARITIES = ['全部', 'UR', 'SSR', 'SR', 'R', 'N'];
 export default function HomePage() {
   const supabase = createClient();
   const [user, setUser] = useState<any>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [myNickname, setMyNickname] = useState('島民玩家');
+
   const [items, setItems] = useState<any[]>([]);
   const [usersMap, setUsersMap] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
@@ -30,63 +47,180 @@ export default function HomePage() {
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [selectedRarity, setSelectedRarity] = useState('全部');
 
-  useEffect(() => {
-    const fetchData = async () => {
-      setLoading(true);
-      // 1. 取得目前登入使用者
-      const { data: { user: currentUser } } = await supabase.auth.getUser();
-      setUser(currentUser);
+  // 留言彈窗狀態
+  const [activeItem, setActiveItem] = useState<any | null>(null);
+  const [comments, setComments] = useState<any[]>([]);
+  const [newComment, setNewComment] = useState('');
+  const [sendingComment, setSendingComment] = useState(false);
 
-      // 2. 直接讀取 items 資料表（不使用複雜 JOIN 避免因外鍵名稱不同而查不到）
-      const { data: itemsData, error } = await supabase
-        .from('items')
-        .select('*')
-        .order('created_at', { ascending: false });
+  // 通知鈴鐺狀態
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [showNotifMenu, setShowNotifMenu] = useState(false);
 
-      if (!error && itemsData) {
-        // 只保留未下架的道具
-        const activeItems = itemsData.filter(
-          (item) => !item.status || item.status === 'active'
-        );
-        setItems(activeItems);
+  const fetchData = async () => {
+    setLoading(true);
+    const { data: { user: currentUser } } = await supabase.auth.getUser();
+    setUser(currentUser);
 
-        // 3. 讀取賣家暱稱對照表
-        const { data: usersData } = await supabase
-          .from('users')
-          .select('id, nickname');
-        if (usersData) {
-          const map: Record<string, string> = {};
-          usersData.forEach((u: any) => {
-            map[u.id] = u.nickname || '島民玩家';
-          });
-          setUsersMap(map);
+    // 讀取會員資料表與管理者權限
+    const { data: usersData } = await supabase
+      .from('users')
+      .select('id, nickname, is_admin');
+
+    const map: Record<string, string> = {};
+    if (usersData) {
+      usersData.forEach((u: any) => {
+        map[u.id] = u.nickname || '島民玩家';
+        if (currentUser && u.id === currentUser.id) {
+          setIsAdmin(u.is_admin === true);
+          setMyNickname(u.nickname || '島民玩家');
         }
-      }
-      setLoading(false);
-    };
+      });
+      setUsersMap(map);
+    }
 
+    // 讀取商品並自動過濾已超過 48 小時的道具
+    const { data: itemsData } = await supabase
+      .from('items')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (itemsData) {
+      const now = Date.now();
+      const validItems = itemsData.filter((item) => {
+        const expireTime = item.expires_at
+          ? new Date(item.expires_at).getTime()
+          : new Date(item.created_at).getTime() + 48 * 60 * 60 * 1000;
+        return expireTime > now && (!item.status || item.status === 'active');
+      });
+      setItems(validItems);
+    }
+
+    // 若已登入，讀取個人通知
+    if (currentUser) {
+      const { data: notifData } = await supabase
+        .from('notifications')
+        .select('*')
+        .eq('user_id', currentUser.id)
+        .order('created_at', { ascending: false })
+        .limit(20);
+      if (notifData) setNotifications(notifData);
+    }
+
+    setLoading(false);
+  };
+
+  useEffect(() => {
     fetchData();
-  }, [supabase]);
+  }, []);
+
+  // 計算 48 小時剩餘時間
+  const getRemainingHours = (item: any) => {
+    const expireTime = item.expires_at
+      ? new Date(item.expires_at).getTime()
+      : new Date(item.created_at).getTime() + 48 * 60 * 60 * 1000;
+    const diffHours = Math.max(0, Math.ceil((expireTime - Date.now()) / (1000 * 60 * 60)));
+    return diffHours;
+  };
+
+  // 刪除商品（本人或管理者）
+  const handleDeleteItem = async (e: React.MouseEvent, itemId: string) => {
+    e.stopPropagation();
+    if (!confirm('確定要刪除這筆道具嗎？刪除後無法復原喔！')) return;
+
+    const { error } = await supabase.from('items').delete().eq('id', itemId);
+    if (error) {
+      alert('刪除失敗：' + error.message);
+    } else {
+      setItems((prev) => prev.filter((i) => i.id !== itemId));
+      if (activeItem?.id === itemId) setActiveItem(null);
+    }
+  };
+
+  // 開啟商品卡片詳情與留言板
+  const openItemModal = async (item: any) => {
+    setActiveItem(item);
+    setComments([]);
+    const { data } = await supabase
+      .from('comments')
+      .select('*')
+      .eq('item_id', item.id)
+      .order('created_at', { ascending: true });
+    if (data) setComments(data);
+  };
+
+  // 送出留言並發送通知給賣家
+  const handleSendComment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user) {
+      alert('請先登入才能留言詢問喔！');
+      return;
+    }
+    if (!newComment.trim() || !activeItem) return;
+
+    setSendingComment(true);
+    const content = newComment.trim();
+
+    const { data: inserted, error } = await supabase
+      .from('comments')
+      .insert({
+        item_id: activeItem.id,
+        user_id: user.id,
+        content,
+      })
+      .select()
+      .single();
+
+    if (!error && inserted) {
+      setComments((prev) => [...prev, inserted]);
+      setNewComment('');
+
+      // 如果不是賣家自己留言，就發送通知給賣家
+      if (activeItem.user_id !== user.id) {
+        await supabase.from('notifications').insert({
+          user_id: activeItem.user_id,
+          sender_name: myNickname,
+          item_id: activeItem.id,
+          item_title: activeItem.title,
+          message: content,
+        });
+      }
+    } else if (error) {
+      alert('留言失敗：' + error.message);
+    }
+    setSendingComment(false);
+  };
+
+  // 標記所有通知為已讀
+  const markNotificationsRead = async () => {
+    setShowNotifMenu(!showNotifMenu);
+    if (!user) return;
+    const unreadIds = notifications.filter((n) => !n.is_read).map((n) => n.id);
+    if (unreadIds.length > 0) {
+      await supabase
+        .from('notifications')
+        .update({ is_read: true })
+        .in('id', unreadIds);
+      setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
+    }
+  };
+
+  const unreadCount = notifications.filter((n) => !n.is_read).length;
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
-    setUser(null);
     window.location.reload();
   };
 
-  // 前端即時篩選搜尋、分類與稀有度
   const filteredItems = items.filter((item) => {
-    const matchCategory =
-      selectedCategory === 'all' || item.category === selectedCategory;
-    const matchRarity =
-      selectedRarity === '全部' || item.rarity === selectedRarity;
+    const matchCategory = selectedCategory === 'all' || item.category === selectedCategory;
+    const matchRarity = selectedRarity === '全部' || item.rarity === selectedRarity;
     const keyword = searchQuery.trim().toLowerCase();
     const matchSearch =
       !keyword ||
       (item.title && item.title.toLowerCase().includes(keyword)) ||
       (item.wanted_items && item.wanted_items.toLowerCase().includes(keyword)) ||
       (item.description && item.description.toLowerCase().includes(keyword));
-
     return matchCategory && matchRarity && matchSearch;
   });
 
@@ -99,7 +233,16 @@ export default function HomePage() {
             <div className="w-10 h-10 rounded-2xl bg-[#F59E0B] flex items-center justify-center text-white text-xl shadow-sm">
               🐾
             </div>
-            <span className="text-xl font-bold tracking-tight">寵物島市集</span>
+            <div>
+              <span className="text-xl font-bold tracking-tight block leading-none">
+                寵物島市集
+              </span>
+              {isAdmin && (
+                <span className="inline-flex items-center gap-1 text-[11px] text-amber-700 font-bold mt-0.5">
+                  <ShieldCheck className="w-3 h-3" /> 管理者模式
+                </span>
+              )}
+            </div>
           </Link>
 
           {/* 搜尋框 */}
@@ -118,6 +261,54 @@ export default function HomePage() {
           <div className="flex items-center gap-2.5">
             {user ? (
               <>
+                {/* 通知鈴鐺 */}
+                <div className="relative">
+                  <button
+                    onClick={markNotificationsRead}
+                    title="留言通知"
+                    className="relative p-2.5 rounded-full bg-white border border-[#E6D8C3] text-[#6E6254] hover:border-[#F59E0B] transition"
+                  >
+                    <Bell className="w-4 h-4" />
+                    {unreadCount > 0 && (
+                      <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">
+                        {unreadCount}
+                      </span>
+                    )}
+                  </button>
+
+                  {showNotifMenu && (
+                    <div className="absolute right-0 mt-2 w-80 bg-white rounded-2xl shadow-lg border border-[#F3E8D2] p-3 z-30">
+                      <div className="text-xs font-bold text-[#8C7B6B] pb-2 mb-2 border-b border-[#F3E8D2]">
+                        最新留言通知
+                      </div>
+                      {notifications.length === 0 ? (
+                        <p className="text-xs text-[#A39585] py-4 text-center">
+                          目前還沒有新的留言通知喔！
+                        </p>
+                      ) : (
+                        <div className="max-h-64 overflow-y-auto space-y-2">
+                          {notifications.map((n) => (
+                            <div
+                              key={n.id}
+                              onClick={() => {
+                                const target = items.find((i) => i.id === n.item_id);
+                                if (target) openItemModal(target);
+                                setShowNotifMenu(false);
+                              }}
+                              className="p-2.5 rounded-xl bg-[#FFFDF7] hover:bg-[#FEF3C7]/50 cursor-pointer border border-[#F3E8D2] text-xs"
+                            >
+                              <p className="font-bold text-[#4A4238]">
+                                @{n.sender_name} 在「{n.item_title}」留言：
+                              </p>
+                              <p className="text-[#6E6254] line-clamp-2 mt-0.5">{n.message}</p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
                 <Link
                   href="/items/new"
                   className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-[#F59E0B] hover:bg-[#D97706] text-white text-sm font-bold shadow-sm transition"
@@ -127,7 +318,7 @@ export default function HomePage() {
                 <button
                   onClick={handleLogout}
                   title="登出"
-                  className="p-2 rounded-full bg-white border border-[#E6D8C3] text-[#8C7B6B] hover:text-[#4A4238] transition"
+                  className="p-2.5 rounded-full bg-white border border-[#E6D8C3] text-[#8C7B6B] hover:text-[#4A4238] transition"
                 >
                   <LogOut className="w-4 h-4" />
                 </button>
@@ -163,7 +354,6 @@ export default function HomePage() {
 
       {/* 主內容區 */}
       <main className="max-w-6xl mx-auto px-4 py-6">
-        {/* 稀有度篩選與統計 */}
         <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-sm text-[#8C7B6B]">稀有度：</span>
@@ -182,7 +372,7 @@ export default function HomePage() {
             ))}
           </div>
           <span className="text-sm text-[#8C7B6B]">
-            共 {filteredItems.length} 件交換中道具
+            共 {filteredItems.length} 件交換中道具（每筆上架保留 48 小時）
           </span>
         </div>
 
@@ -205,43 +395,56 @@ export default function HomePage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
             {filteredItems.map((item) => {
               const coverImg =
-                Array.isArray(item.images) && item.images.length > 0
-                  ? item.images[0]
-                  : null;
+                Array.isArray(item.images) && item.images.length > 0 ? item.images[0] : null;
               const sellerName = usersMap[item.user_id] || '島民玩家';
+              const canDelete = isAdmin || (user && user.id === item.user_id);
+              const hoursLeft = getRemainingHours(item);
 
               return (
                 <div
                   key={item.id}
-                  className="bg-white rounded-3xl border border-[#F3E8D2] overflow-hidden shadow-sm hover:shadow-md transition flex flex-col"
+                  onClick={() => openItemModal(item)}
+                  className="cursor-pointer bg-white rounded-3xl border border-[#F3E8D2] overflow-hidden shadow-sm hover:shadow-md hover:-translate-y-0.5 transition flex flex-col"
                 >
                   {/* 商品圖片 */}
                   <div className="relative aspect-square bg-[#FDF8EC] flex items-center justify-center overflow-hidden">
                     {coverImg ? (
-                      <img
-                        src={coverImg}
-                        alt={item.title}
-                        className="w-full h-full object-cover"
-                      />
+                      <img src={coverImg} alt={item.title} className="w-full h-full object-cover" />
                     ) : (
                       <div className="flex flex-col items-center text-[#C4B5A0]">
                         <ImageIcon className="w-10 h-10 mb-1" />
                         <span className="text-xs">無圖片</span>
                       </div>
                     )}
+
+                    {/* 左上稀有度 */}
                     {item.rarity && (
                       <div className="absolute top-3 left-3">
                         <RarityBadge rarity={item.rarity as RarityType} />
                       </div>
                     )}
+
+                    {/* 右上 48h 倒數 & 管理者/本人刪除按鈕 */}
+                    <div className="absolute top-3 right-3 flex items-center gap-1.5">
+                      <span className="px-2 py-1 rounded-full bg-black/55 text-white text-[10px] font-medium flex items-center gap-1">
+                        <Clock className="w-3 h-3" /> 剩 {hoursLeft}h
+                      </span>
+                      {canDelete && (
+                        <button
+                          onClick={(e) => handleDeleteItem(e, item.id)}
+                          title="刪除道具"
+                          className="p-1.5 rounded-full bg-red-500 hover:bg-red-600 text-white shadow-sm transition"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
                   </div>
 
                   {/* 商品資訊 */}
                   <div className="p-4 flex-1 flex flex-col justify-between">
                     <div>
-                      <h3 className="font-bold text-base mb-1.5 line-clamp-1">
-                        {item.title}
-                      </h3>
+                      <h3 className="font-bold text-base mb-1.5 line-clamp-1">{item.title}</h3>
                       <div className="bg-[#FFFDF7] border border-[#F3E8D2] rounded-2xl p-2.5 mb-3">
                         <span className="text-[11px] font-semibold text-[#D97706] block mb-0.5">
                           想換物品：
@@ -254,10 +457,8 @@ export default function HomePage() {
 
                     <div className="flex items-center justify-between pt-2 border-t border-[#F7EFE0] text-xs text-[#8C7B6B]">
                       <span>@{sellerName}</span>
-                      <span>
-                        {item.created_at
-                          ? new Date(item.created_at).toLocaleDateString('zh-TW')
-                          : ''}
+                      <span className="inline-flex items-center gap-1 text-[#D97706] font-medium">
+                        <MessageCircle className="w-3.5 h-3.5" /> 點擊詢問
                       </span>
                     </div>
                   </div>
@@ -267,6 +468,115 @@ export default function HomePage() {
           </div>
         )}
       </main>
+
+      {/* 點擊卡片彈出的詳情與留言板視窗 */}
+      {activeItem && (
+        <div
+          onClick={() => setActiveItem(null)}
+          className="fixed inset-0 z-40 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white rounded-3xl max-w-lg w-full max-h-[90vh] overflow-y-auto border border-[#F3E8D2] shadow-xl p-6"
+          >
+            <div className="flex items-start justify-between gap-3 mb-4">
+              <div>
+                <div className="flex items-center gap-2 mb-1">
+                  {activeItem.rarity && <RarityBadge rarity={activeItem.rarity as RarityType} />}
+                  <span className="text-xs text-[#8C7B6B]">
+                    發布者：@{usersMap[activeItem.user_id] || '島民玩家'}
+                  </span>
+                </div>
+                <h2 className="text-xl font-bold">{activeItem.title}</h2>
+              </div>
+              <button
+                onClick={() => setActiveItem(null)}
+                className="p-1.5 rounded-full bg-[#FFFDF7] border border-[#E6D8C3] text-[#8C7B6B] hover:text-[#4A4238]"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* 圖片展示 */}
+            {Array.isArray(activeItem.images) && activeItem.images.length > 0 && (
+              <div className="flex gap-2 overflow-x-auto pb-2 mb-4">
+                {activeItem.images.map((img: string, i: number) => (
+                  <img
+                    key={i}
+                    src={img}
+                    alt="item"
+                    className="w-40 h-40 object-cover rounded-2xl border border-[#F3E8D2] shrink-0"
+                  />
+                ))}
+              </div>
+            )}
+
+            <div className="bg-[#FFFDF7] border border-[#F3E8D2] rounded-2xl p-3.5 mb-4 space-y-2 text-sm">
+              <div>
+                <span className="font-bold text-[#D97706]">想交換物品：</span>
+                <span>{activeItem.wanted_items}</span>
+              </div>
+              {activeItem.description && (
+                <div>
+                  <span className="font-bold text-[#8C7B6B]">補充說明：</span>
+                  <span>{activeItem.description}</span>
+                </div>
+              )}
+              <div className="text-xs text-[#8C7B6B] pt-1">
+                ⏳ 距離自動下架還有約 {getRemainingHours(activeItem)} 小時
+              </div>
+            </div>
+
+            {/* 留言詢問區塊 */}
+            <div className="border-t border-[#F3E8D2] pt-4">
+              <h3 className="font-bold text-sm mb-3 flex items-center gap-1.5">
+                <MessageCircle className="w-4 h-4 text-[#F59E0B]" /> 交換詢問與報價 ({comments.length})
+              </h3>
+
+              <div className="space-y-2.5 max-h-48 overflow-y-auto mb-4 pr-1">
+                {comments.length === 0 ? (
+                  <p className="text-xs text-[#A39585] text-center py-4">
+                    還沒有人留言，搶先提出你的交換方案吧！
+                  </p>
+                ) : (
+                  comments.map((c) => (
+                    <div
+                      key={c.id}
+                      className="bg-[#FFFDF7] border border-[#F3E8D2] rounded-2xl p-3 text-xs"
+                    >
+                      <div className="flex justify-between text-[#8C7B6B] mb-1">
+                        <span className="font-bold text-[#4A4238]">
+                          @{usersMap[c.user_id] || '島民玩家'}
+                        </span>
+                        <span>{new Date(c.created_at).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' })}</span>
+                      </div>
+                      <p className="text-[#4A4238]">{c.content}</p>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <form onSubmit={handleSendComment} className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder={user ? '輸入想交換的道具或遊戲 ID...' : '請先登入後再留言詢問'}
+                  value={newComment}
+                  onChange={(e) => setNewComment(e.target.value)}
+                  disabled={!user || sendingComment}
+                  className="flex-1 px-4 py-2.5 rounded-full bg-[#FFFDF7] border border-[#E6D8C3] text-xs focus:outline-none focus:border-[#F59E0B]"
+                />
+                <button
+                  type="submit"
+                  disabled={!user || sendingComment || !newComment.trim()}
+                  className="px-4 py-2.5 rounded-full bg-[#F59E0B] hover:bg-[#D97706] text-white text-xs font-bold flex items-center gap-1 disabled:opacity-50"
+                >
+                  <Send className="w-3.5 h-3.5" /> 送出
+                </button>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
