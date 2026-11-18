@@ -44,6 +44,7 @@ import {
   PartyPopper,
   Lightbulb,
   Crown,
+  ArrowUpDown,
 } from 'lucide-react';
 
 const CATEGORIES = [
@@ -76,11 +77,12 @@ export default function HomePage() {
   const [usersMap, setUsersMap] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(true);
 
-  // 看板切換與篩選
+  // 看板切換、篩選與排序
   const [activeBoard, setActiveBoard] = useState<'offer' | 'wish'>('offer');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [selectedRarity, setSelectedRarity] = useState('全部');
+  const [sortBy, setSortBy] = useState<'vip_first' | 'newest' | 'reviews' | 'expiring'>('vip_first');
   const [showCompleted, setShowCompleted] = useState(false);
 
   // 成交快報輪播索引
@@ -110,7 +112,7 @@ export default function HomePage() {
 
   // 功能許願與贊助 VIP 彈窗
   const [showSupportModal, setShowSupportModal] = useState(false);
-  const [supportModalTab, setSupportModalTab] = useState<'feedback' | 'vip'>('feedback');
+  const [supportModalTab, setSupportModalTab] = useState<'feedback' | 'vip'>('vip');
 
   // 我的市集修改名稱狀態
   const [editGameName, setEditGameName] = useState('');
@@ -145,7 +147,6 @@ export default function HomePage() {
     const { data: { user: currentUser } } = await supabase.auth.getUser();
     setUser(currentUser);
 
-    // 讀取全站公告與贊助連結
     const { data: annData } = await supabase
       .from('site_announcements')
       .select('content, is_active, sponsor_url')
@@ -157,7 +158,6 @@ export default function HomePage() {
       setEditAnnounceActive(annData.is_active);
     }
 
-    // 讀取最近 48 小時搜尋關鍵字
     const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
     const { data: searchLogsData } = await supabase
       .from('search_logs')
@@ -168,7 +168,6 @@ export default function HomePage() {
       setRecentSearches(searchLogsData.map((s) => s.keyword));
     }
 
-    // 讀取會員清單
     const { data: usersData } = await supabase
       .from('users')
       .select(
@@ -206,7 +205,6 @@ export default function HomePage() {
       setNeedBindProfile(true);
     }
 
-    // 讀取有效貼文
     const { data: itemsData } = await supabase
       .from('items')
       .select('*')
@@ -426,7 +424,6 @@ export default function HomePage() {
     }
   };
 
-  // 管理者一鍵開通 / 取消 30 天 VIP
   const handleToggleVipUser = async (targetUser: any) => {
     const currentlyVip = isUserVip(targetUser);
     const nextVipExpires = currentlyVip
@@ -680,30 +677,51 @@ export default function HomePage() {
     window.location.reload();
   };
 
-  const filteredItems = items.filter((item) => {
-    const itemPostType = item.post_type === 'wish' ? 'wish' : 'offer';
-    if (itemPostType !== activeBoard) return false;
+  // 篩選 + 排序（支援 VIP 優先置頂曝光）
+  const filteredItems = useMemo(() => {
+    const list = items.filter((item) => {
+      const itemPostType = item.post_type === 'wish' ? 'wish' : 'offer';
+      if (itemPostType !== activeBoard) return false;
 
-    const isItemCompleted = item.status === 'completed';
-    if (!showCompleted && isItemCompleted) return false;
+      const isItemCompleted = item.status === 'completed';
+      if (!showCompleted && isItemCompleted) return false;
 
-    const matchCategory = selectedCategory === 'all' || item.category === selectedCategory;
-    const matchRarity = selectedRarity === '全部' || item.rarity === selectedRarity;
-    const keyword = searchQuery.trim().toLowerCase();
-    const matchSearch =
-      !keyword ||
-      (item.title && item.title.toLowerCase().includes(keyword)) ||
-      (item.wanted_items && item.wanted_items.toLowerCase().includes(keyword)) ||
-      (item.description && item.description.toLowerCase().includes(keyword));
-    return matchCategory && matchRarity && matchSearch;
-  });
+      const matchCategory = selectedCategory === 'all' || item.category === selectedCategory;
+      const matchRarity = selectedRarity === '全部' || item.rarity === selectedRarity;
+      const keyword = searchQuery.trim().toLowerCase();
+      const matchSearch =
+        !keyword ||
+        (item.title && item.title.toLowerCase().includes(keyword)) ||
+        (item.wanted_items && item.wanted_items.toLowerCase().includes(keyword)) ||
+        (item.description && item.description.toLowerCase().includes(keyword));
+      return matchCategory && matchRarity && matchSearch;
+    });
+
+    return [...list].sort((a, b) => {
+      if (sortBy === 'vip_first') {
+        const aVip = isUserVip(usersMap[a.user_id]) ? 1 : 0;
+        const bVip = isUserVip(usersMap[b.user_id]) ? 1 : 0;
+        if (bVip !== aVip) return bVip - aVip;
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      }
+      if (sortBy === 'reviews') {
+        const aRev = usersMap[a.user_id]?.good_reviews || 0;
+        const bRev = usersMap[b.user_id]?.good_reviews || 0;
+        return bRev - aRev;
+      }
+      if (sortBy === 'expiring') {
+        return getRemainingHours(a) - getRemainingHours(b);
+      }
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    });
+  }, [items, activeBoard, showCompleted, selectedCategory, selectedRarity, searchQuery, sortBy, usersMap]);
 
   const myItems = user ? items.filter((i) => i.user_id === user.id) : [];
   const myFavoriteItems = items.filter((i) => favoriteIds.includes(i.id));
   const firstAdminUser = usersList.find((u) => u.is_admin);
 
   return (
-    <div className="min-h-screen bg-[#FFFDF7] text-[#4A4238] flex flex-col">
+    <div className="min-h-dvh bg-[#FFFDF7] text-[#4A4238] flex flex-col overflow-x-hidden">
       {/* 首次登入未綁定遊戲 ID / 遊戲名稱時強制彈出設定視窗 */}
       {user && needBindProfile && (
         <GameProfileModal
@@ -718,10 +736,10 @@ export default function HomePage() {
 
       {/* 全站公告橫幅 */}
       {(announcement.is_active || isAdmin) && (
-        <div className="bg-[#FEF3C7] border-b border-[#F59E0B]/30 px-4 py-2 text-xs text-[#92400E]">
+        <div className="bg-[#FEF3C7] border-b border-[#F59E0B]/30 px-3 sm:px-4 py-1.5 landscape:py-1 text-xs text-[#92400E]">
           <div className="max-w-6xl mx-auto flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2 min-w-0">
-              <Megaphone className="w-4 h-4 text-[#D97706] shrink-0" />
+            <div className="flex items-center gap-1.5 min-w-0">
+              <Megaphone className="w-3.5 h-3.5 text-[#D97706] shrink-0" />
               <span className="font-medium truncate">
                 {announcement.is_active
                   ? announcement.content
@@ -731,7 +749,7 @@ export default function HomePage() {
             {isAdmin && (
               <button
                 onClick={() => setShowEditAnnounce(!showEditAnnounce)}
-                className="px-2.5 py-0.5 rounded-full bg-white/80 hover:bg-white border border-[#F59E0B]/40 text-[#B45309] font-bold shrink-0"
+                className="px-2.5 py-0.5 rounded-full bg-white/80 hover:bg-white border border-[#F59E0B]/40 text-[#B45309] font-bold whitespace-nowrap shrink-0"
               >
                 編輯公告
               </button>
@@ -748,9 +766,9 @@ export default function HomePage() {
                 value={editAnnounceText}
                 onChange={(e) => setEditAnnounceText(e.target.value)}
                 placeholder="輸入全站公告內容..."
-                className="flex-1 min-w-[220px] px-3 py-1.5 rounded-xl bg-white border border-[#E6D8C3] text-xs text-[#4A4238]"
+                className="flex-1 min-w-[200px] px-3 py-1.5 rounded-xl bg-white border border-[#E6D8C3] text-xs text-[#4A4238]"
               />
-              <label className="inline-flex items-center gap-1 text-xs font-bold cursor-pointer">
+              <label className="inline-flex items-center gap-1 text-xs font-bold whitespace-nowrap cursor-pointer">
                 <input
                   type="checkbox"
                   checked={editAnnounceActive}
@@ -760,7 +778,7 @@ export default function HomePage() {
               </label>
               <button
                 type="submit"
-                className="px-3.5 py-1.5 rounded-xl bg-[#F59E0B] text-white font-bold text-xs"
+                className="px-3.5 py-1.5 rounded-xl bg-[#F59E0B] text-white font-bold text-xs whitespace-nowrap"
               >
                 儲存公告
               </button>
@@ -771,13 +789,13 @@ export default function HomePage() {
 
       {/* 近期成交動態跑馬燈 */}
       {completedTickers.length > 0 && (
-        <div className="bg-emerald-50/90 border-b border-emerald-200/70 px-4 py-1.5 text-xs text-emerald-800">
-          <div className="max-w-6xl mx-auto flex items-center justify-center gap-2">
+        <div className="bg-emerald-50/90 border-b border-emerald-200/70 px-3 sm:px-4 py-1 text-xs text-emerald-800">
+          <div className="max-w-6xl mx-auto flex items-center justify-center gap-1.5">
             <PartyPopper className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
             <span className="truncate font-medium">
-              🎉 成交快報：島民【{getDisplayName(completedTickers[tickerIndex]?.user_id)}】剛剛順利完成了一筆{' '}
-              <strong>{completedTickers[tickerIndex]?.rarity}</strong> 道具「
-              {completedTickers[tickerIndex]?.title}」的交換！
+              🎉 成交快報：島民【{getDisplayName(completedTickers[tickerIndex]?.user_id)}】剛完成一筆{' '}
+              <strong>{completedTickers[tickerIndex]?.rarity}</strong>「
+              {completedTickers[tickerIndex]?.title}」交換！
             </span>
           </div>
         </div>
@@ -785,26 +803,26 @@ export default function HomePage() {
 
       {/* 停權警告橫幅 */}
       {isBanned && (
-        <div className="bg-red-600 text-white text-xs font-bold text-center py-2 px-4">
+        <div className="bg-red-600 text-white text-xs font-bold text-center py-1.5 px-4">
           ⚠️ 您的帳號因違反市集規範已被管理員停權，目前僅供瀏覽，無法發布貼文、留言或使用私訊。
         </div>
       )}
 
       {/* 頂部導覽列 */}
-      <header className="sticky top-0 z-20 bg-[#FFFDF7]/90 backdrop-blur-md border-b border-[#F3E8D2]">
-        <div className="max-w-6xl mx-auto px-4 py-3.5 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5">
-            <Link href="/" className="flex items-center gap-2.5">
-              <div className="w-10 h-10 rounded-2xl bg-[#F59E0B] flex items-center justify-center text-white text-xl shadow-sm">
+      <header className="sticky top-0 z-20 bg-[#FFFDF7]/95 backdrop-blur-md border-b border-[#F3E8D2]">
+        <div className="max-w-6xl mx-auto px-3 sm:px-4 py-2.5 sm:py-3 landscape:py-2 flex items-center justify-between gap-2 sm:gap-3">
+          <div className="flex items-center gap-2 shrink-0">
+            <Link href="/" className="flex items-center gap-2 shrink-0">
+              <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl bg-[#F59E0B] flex items-center justify-center text-white text-lg sm:text-xl shadow-xs shrink-0">
                 🐾
               </div>
-              <div>
-                <span className="text-xl font-bold tracking-tight block leading-none">
+              <div className="whitespace-nowrap">
+                <span className="text-base sm:text-xl font-bold tracking-tight block leading-none">
                   寵物島市集
                 </span>
                 {isAdmin && (
-                  <span className="inline-flex items-center gap-0.5 text-[11px] text-amber-700 font-bold mt-0.5">
-                    <ShieldCheck className="w-3 h-3" /> 管理者模式
+                  <span className="inline-flex items-center gap-0.5 text-[10px] sm:text-[11px] text-amber-700 font-bold mt-0.5">
+                    <ShieldCheck className="w-3 h-3" /> 管理者
                   </span>
                 )}
               </div>
@@ -814,7 +832,7 @@ export default function HomePage() {
               <button
                 onClick={() => setShowMyMarketModal(true)}
                 title="點擊打開「我的市集」與收藏清單"
-                className="hidden md:inline-flex items-center gap-1.5 ml-2 px-3 py-1.5 rounded-full bg-white border border-[#E6D8C3] hover:border-[#F59E0B] text-xs transition"
+                className="hidden lg:inline-flex items-center gap-1.5 ml-1 px-3 py-1.5 rounded-full bg-white border border-[#E6D8C3] hover:border-[#F59E0B] text-xs whitespace-nowrap transition"
               >
                 <Store className="w-3.5 h-3.5 text-[#F59E0B]" />
                 {isUserVip(myProfile) && (
@@ -822,22 +840,20 @@ export default function HomePage() {
                     👑 VIP
                   </span>
                 )}
-                <span className="font-bold">{myProfile.game_name}</span>
-                <span className="text-[#8C7B6B]">(ID:{myProfile.game_id})</span>
+                <span className="font-bold max-w-[90px] truncate">{myProfile.game_name}</span>
                 <span className="text-emerald-700 font-bold">👍{myProfile.good_reviews || 0}</span>
               </button>
             )}
           </div>
 
-          {/* 搜尋框 */}
-          <div className="relative flex-1 max-w-md min-w-[200px]">
-            <Search className="w-4 h-4 text-[#A39585] absolute left-4 top-1/2 -translate-y-1/2" />
+          <div className="hidden md:block relative flex-1 max-w-md min-w-[160px]">
+            <Search className="w-4 h-4 text-[#A39585] absolute left-3.5 top-1/2 -translate-y-1/2" />
             <input
               type="text"
               placeholder="搜尋道具名稱、想交換的物品..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 rounded-full bg-white border border-[#E6D8C3] text-sm focus:outline-none focus:border-[#F59E0B]"
+              className="w-full pl-9 pr-8 py-2 rounded-full bg-white border border-[#E6D8C3] text-sm focus:outline-none focus:border-[#F59E0B]"
             />
             {searchQuery && (
               <button
@@ -849,19 +865,17 @@ export default function HomePage() {
             )}
           </div>
 
-          {/* 右側操作按鈕 */}
-          <div className="flex items-center gap-2">
-            {/* 功能許願留言板 & 贊助 VIP 入口按鈕（所有人皆可點開） */}
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             <button
               onClick={() => {
-                setSupportModalTab('feedback');
+                setSupportModalTab('vip');
                 setShowSupportModal(true);
               }}
-              className="inline-flex items-center gap-1 px-3 py-2 rounded-full bg-white border border-[#E6D8C3] hover:border-[#F59E0B] text-xs font-bold text-[#6E6254] hover:text-[#4A4238] transition"
-              title="許願新功能 & 贊助升級 VIP"
+              className="inline-flex items-center gap-1 px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-full bg-gradient-to-r from-amber-500 to-yellow-500 text-white text-xs font-bold shadow-2xs whitespace-nowrap shrink-0 hover:opacity-95 transition"
+              title="升級 VIP 島主 & 功能許願"
             >
-              <Lightbulb className="w-3.5 h-3.5 text-[#F59E0B]" />
-              <span className="hidden lg:inline">建議 / 贊助</span>
+              <Crown className="w-3.5 h-3.5" />
+              <span>VIP</span>
             </button>
 
             {user ? (
@@ -869,7 +883,7 @@ export default function HomePage() {
                 {isAdmin && (
                   <button
                     onClick={() => setShowAdminDashboard(true)}
-                    className="inline-flex items-center gap-1 px-3 py-2 rounded-full bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-2xs transition"
+                    className="inline-flex items-center gap-1 px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-full bg-amber-700 hover:bg-amber-800 text-white text-xs font-bold whitespace-nowrap shrink-0 transition"
                   >
                     <BarChart3 className="w-3.5 h-3.5" />
                     <span className="hidden sm:inline">戰情室</span>
@@ -879,7 +893,7 @@ export default function HomePage() {
                 <button
                   onClick={() => setShowMyMarketModal(true)}
                   title="我的市集與收藏"
-                  className="md:hidden p-2.5 rounded-full bg-white border border-[#E6D8C3] text-[#6E6254]"
+                  className="lg:hidden p-2 rounded-full bg-white border border-[#E6D8C3] text-[#6E6254] shrink-0"
                 >
                   <Store className="w-4 h-4 text-[#F59E0B]" />
                 </button>
@@ -895,10 +909,10 @@ export default function HomePage() {
                     setShowChatModal(true);
                     setUnreadDmCount(0);
                   }}
-                  className="relative inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-white border border-[#E6D8C3] hover:border-[#F59E0B] text-xs font-bold text-[#4A4238] transition"
+                  className="relative inline-flex items-center gap-1 px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-full bg-white border border-[#E6D8C3] hover:border-[#F59E0B] text-xs font-bold text-[#4A4238] whitespace-nowrap shrink-0 transition"
                 >
                   <MessageSquareHeart className="w-4 h-4 text-[#F59E0B]" />
-                  <span className="hidden sm:inline">1v1 私訊</span>
+                  <span className="hidden sm:inline">私訊</span>
                   {unreadDmCount > 0 && (
                     <span className="px-1.5 py-0.2 rounded-full bg-red-500 text-white text-[10px]">
                       {unreadDmCount}
@@ -906,12 +920,11 @@ export default function HomePage() {
                   )}
                 </button>
 
-                {/* 通知鈴鐺 */}
-                <div className="relative">
+                <div className="relative shrink-0">
                   <button
                     onClick={markNotificationsRead}
                     title="通知中心"
-                    className="relative p-2.5 rounded-full bg-white border border-[#E6D8C3] text-[#6E6254] hover:border-[#F59E0B] transition"
+                    className="relative p-2 rounded-full bg-white border border-[#E6D8C3] text-[#6E6254] hover:border-[#F59E0B] transition"
                   >
                     <Bell className="w-4 h-4" />
                     {unreadCount > 0 && (
@@ -922,16 +935,19 @@ export default function HomePage() {
                   </button>
 
                   {showNotifMenu && (
-                    <div className="absolute right-0 mt-2 w-80 bg-white rounded-2xl shadow-lg border border-[#F3E8D2] p-3 z-30">
-                      <div className="text-xs font-bold text-[#8C7B6B] pb-2 mb-2 border-b border-[#F3E8D2]">
-                        最新通知中心
+                    <div className="fixed sm:absolute right-3 sm:right-0 left-3 sm:left-auto mt-2 sm:w-80 bg-white rounded-2xl shadow-xl border border-[#F3E8D2] p-3 z-30">
+                      <div className="text-xs font-bold text-[#8C7B6B] pb-2 mb-2 border-b border-[#F3E8D2] flex justify-between items-center">
+                        <span>最新通知中心</span>
+                        <button onClick={() => setShowNotifMenu(false)} className="sm:hidden text-[#8C7B6B]">
+                          <X className="w-4 h-4" />
+                        </button>
                       </div>
                       {notifications.length === 0 ? (
                         <p className="text-xs text-[#A39585] py-4 text-center">
                           目前還沒有新的通知喔！
                         </p>
                       ) : (
-                        <div className="max-h-64 overflow-y-auto space-y-2">
+                        <div className="max-h-60 overflow-y-auto space-y-2">
                           {notifications.map((n) => (
                             <div
                               key={n.id}
@@ -963,15 +979,15 @@ export default function HomePage() {
                 {!isBanned && (
                   <Link
                     href="/items/new"
-                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-[#F59E0B] hover:bg-[#D97706] text-white text-sm font-bold shadow-sm transition"
+                    className="inline-flex items-center gap-1 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full bg-[#F59E0B] hover:bg-[#D97706] text-white text-xs sm:text-sm font-bold shadow-xs whitespace-nowrap shrink-0 transition"
                   >
-                    <Plus className="w-4 h-4" /> 發布
+                    <Plus className="w-4 h-4" /> <span>發布</span>
                   </Link>
                 )}
                 <button
                   onClick={handleLogout}
                   title="登出"
-                  className="p-2.5 rounded-full bg-white border border-[#E6D8C3] text-[#8C7B6B] hover:text-[#4A4238] transition"
+                  className="p-2 rounded-full bg-white border border-[#E6D8C3] text-[#8C7B6B] hover:text-[#4A4238] shrink-0 transition"
                 >
                   <LogOut className="w-4 h-4" />
                 </button>
@@ -979,20 +995,42 @@ export default function HomePage() {
             ) : (
               <Link
                 href="/login"
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-[#F59E0B] hover:bg-[#D97706] text-white text-sm font-bold shadow-sm transition"
+                className="inline-flex items-center gap-1 px-3.5 py-2 rounded-full bg-[#F59E0B] hover:bg-[#D97706] text-white text-xs sm:text-sm font-bold shadow-xs whitespace-nowrap shrink-0 transition"
               >
-                <User className="w-4 h-4" /> 登入 / 註冊
+                <User className="w-4 h-4" /> <span>登入 / 註冊</span>
               </Link>
             )}
           </div>
         </div>
 
+        {/* 手機直式專屬搜尋列 */}
+        <div className="md:hidden px-3 pb-2.5">
+          <div className="relative w-full">
+            <Search className="w-4 h-4 text-[#A39585] absolute left-3.5 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              placeholder="搜尋道具名稱、想交換的物品..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-9 pr-8 py-2 rounded-full bg-white border border-[#E6D8C3] text-xs focus:outline-none focus:border-[#F59E0B]"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-[#A39585]"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+        </div>
+
         {/* 雙看板切換頁籤 + 分類標籤 */}
-        <div className="max-w-6xl mx-auto px-4 pb-3 flex flex-wrap items-center justify-between gap-2.5">
-          <div className="flex items-center gap-1.5 bg-white p-1 rounded-full border border-[#E6D8C3]">
+        <div className="max-w-6xl mx-auto px-3 sm:px-4 pb-2.5 flex items-center justify-between gap-2 overflow-x-auto no-scrollbar">
+          <div className="flex items-center gap-1 bg-white p-1 rounded-full border border-[#E6D8C3] shrink-0">
             <button
               onClick={() => setActiveBoard('offer')}
-              className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold transition ${
+              className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold whitespace-nowrap shrink-0 transition ${
                 activeBoard === 'offer'
                   ? 'bg-[#F59E0B] text-white shadow-2xs'
                   : 'text-[#6E6254] hover:text-[#4A4238]'
@@ -1002,7 +1040,7 @@ export default function HomePage() {
             </button>
             <button
               onClick={() => setActiveBoard('wish')}
-              className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold transition ${
+              className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold whitespace-nowrap shrink-0 transition ${
                 activeBoard === 'wish'
                   ? 'bg-pink-500 text-white shadow-2xs'
                   : 'text-[#6E6254] hover:text-[#4A4238]'
@@ -1012,14 +1050,14 @@ export default function HomePage() {
             </button>
           </div>
 
-          <div className="flex items-center gap-2 overflow-x-auto">
+          <div className="flex items-center gap-1.5 shrink-0">
             {CATEGORIES.map((cat) => (
               <button
                 key={cat.id}
                 onClick={() => setSelectedCategory(cat.id)}
-                className={`px-3.5 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition ${
+                className={`px-3 py-1.5 rounded-full text-xs sm:text-sm font-medium whitespace-nowrap shrink-0 transition ${
                   selectedCategory === cat.id
-                    ? 'bg-[#2C2520] text-white shadow-sm'
+                    ? 'bg-[#2C2520] text-white shadow-2xs'
                     : 'bg-white border border-[#E6D8C3] text-[#6E6254] hover:border-[#F59E0B]'
                 }`}
               >
@@ -1031,18 +1069,17 @@ export default function HomePage() {
       </header>
 
       {/* 主內容區 */}
-      <main className="max-w-6xl mx-auto px-4 py-5 flex-1 w-full">
-        {/* 🔥 48 小時熱門搜尋與許願排行榜 */}
+      <main className="max-w-6xl mx-auto px-3 sm:px-4 py-4 sm:py-5 flex-1 w-full">
         {trendingKeywords.length > 0 && (
-          <div className="mb-5 px-4 py-2.5 rounded-2xl bg-white border border-[#F3E8D2] flex items-center gap-2 flex-wrap">
-            <span className="inline-flex items-center gap-1 text-xs font-bold text-orange-600 shrink-0">
-              <Flame className="w-4 h-4 fill-orange-500" /> 48h 熱門搶手榜：
+          <div className="mb-4 px-3.5 py-2 rounded-2xl bg-white border border-[#F3E8D2] flex items-center gap-2 overflow-x-auto no-scrollbar">
+            <span className="inline-flex items-center gap-1 text-xs font-bold text-orange-600 whitespace-nowrap shrink-0">
+              <Flame className="w-4 h-4 fill-orange-500" /> 48h 熱門榜：
             </span>
             {trendingKeywords.map((kw, idx) => (
               <button
                 key={kw}
                 onClick={() => setSearchQuery(kw)}
-                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-[#FFFDF7] hover:bg-[#FEF3C7] border border-[#E6D8C3] text-xs font-medium text-[#4A4238] transition"
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-[#FFFDF7] hover:bg-[#FEF3C7] border border-[#E6D8C3] text-xs font-medium text-[#4A4238] whitespace-nowrap shrink-0 transition"
               >
                 <span className="text-[10px] font-bold text-[#D97706]">TOP {idx + 1}</span>
                 <span>{kw}</span>
@@ -1051,14 +1088,15 @@ export default function HomePage() {
           </div>
         )}
 
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-sm text-[#8C7B6B]">稀有度：</span>
+        {/* 篩選、排序與管理名單列 */}
+        <div className="flex flex-wrap items-center justify-between gap-2.5 mb-5">
+          <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto no-scrollbar max-w-full pb-1 sm:pb-0">
+            <span className="text-xs sm:text-sm text-[#8C7B6B] whitespace-nowrap shrink-0">稀有度：</span>
             {RARITIES.map((r) => (
               <button
                 key={r}
                 onClick={() => setSelectedRarity(r)}
-                className={`px-3 py-1 rounded-xl text-xs font-bold transition ${
+                className={`px-2.5 sm:px-3 py-1 rounded-xl text-xs font-bold whitespace-nowrap shrink-0 transition ${
                   selectedRarity === r
                     ? 'bg-[#2C2520] text-white'
                     : 'bg-white border border-[#E6D8C3] text-[#6E6254] hover:border-[#2C2520]'
@@ -1068,46 +1106,60 @@ export default function HomePage() {
               </button>
             ))}
 
-            <label className="ml-2 inline-flex items-center gap-1.5 text-xs text-[#6E6254] cursor-pointer select-none">
+            <div className="inline-flex items-center gap-1 ml-1 px-2.5 py-1 rounded-xl bg-white border border-[#E6D8C3] text-xs shrink-0">
+              <ArrowUpDown className="w-3 h-3 text-[#8C7B6B]" />
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as any)}
+                className="bg-transparent text-xs font-medium text-[#4A4238] focus:outline-none cursor-pointer"
+              >
+                <option value="vip_first">👑 VIP 置頂優先</option>
+                <option value="newest">🕒 最新上架</option>
+                <option value="reviews">👍 好評最高</option>
+                <option value="expiring">⏳ 即將到期</option>
+              </select>
+            </div>
+
+            <label className="ml-1 inline-flex items-center gap-1 text-xs text-[#6E6254] whitespace-nowrap shrink-0 cursor-pointer select-none">
               <input
                 type="checkbox"
                 checked={showCompleted}
                 onChange={(e) => setShowCompleted(e.target.checked)}
                 className="rounded accent-[#F59E0B]"
               />
-              顯示已換出 / 已徵得
+              顯示已換出
             </label>
           </div>
 
-          <div className="flex items-center gap-2.5 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap">
             <button
               type="button"
               onClick={() => {
-                setSupportModalTab('vip');
+                setSupportModalTab('feedback');
                 setShowSupportModal(true);
               }}
-              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-gradient-to-r from-amber-500 to-yellow-500 text-white text-xs font-bold shadow-2xs hover:opacity-95 transition"
+              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-white border border-[#E6D8C3] hover:border-[#F59E0B] text-xs font-bold text-[#6E6254] whitespace-nowrap shrink-0 transition"
             >
-              <Crown className="w-3.5 h-3.5" /> 升級 VIP 島主
+              <Lightbulb className="w-3.5 h-3.5 text-[#F59E0B]" /> 功能許願板
             </button>
 
             <button
               type="button"
               onClick={() => isAdmin && setShowUsersModal(true)}
               title={isAdmin ? '點擊查看完整島民註冊名冊、VIP 開通與停權管理' : '寵物島市集總註冊人數'}
-              className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold border transition ${
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold border whitespace-nowrap shrink-0 transition ${
                 isAdmin
                   ? 'bg-[#FEF3C7] border-[#F59E0B] text-[#B45309] hover:bg-[#FDE68A] cursor-pointer'
                   : 'bg-white border-[#E6D8C3] text-[#6E6254] cursor-default'
               }`}
             >
               <Users className="w-3.5 h-3.5 text-[#F59E0B]" />
-              已註冊島民：{usersList.length} 人
-              {isAdmin && <span className="underline ml-1">管理名單</span>}
+              已註冊：{usersList.length} 人
+              {isAdmin && <span className="underline ml-0.5">管理</span>}
             </button>
 
-            <span className="text-xs sm:text-sm text-[#8C7B6B]">
-              共 {filteredItems.length} 筆{activeBoard === 'offer' ? '交換' : '許願'}
+            <span className="text-xs text-[#8C7B6B] whitespace-nowrap shrink-0">
+              共 {filteredItems.length} 筆
             </span>
           </div>
         </div>
@@ -1134,7 +1186,7 @@ export default function HomePage() {
             )}
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
+          <div className="grid grid-cols-1 landscape:grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-5">
             {filteredItems.map((item) => {
               const coverImg =
                 Array.isArray(item.images) && item.images.length > 0 ? item.images[0] : null;
@@ -1151,31 +1203,35 @@ export default function HomePage() {
                 <div
                   key={item.id}
                   onClick={() => openItemModal(item)}
-                  className={`cursor-pointer bg-white rounded-3xl border overflow-hidden shadow-sm hover:shadow-md hover:-translate-y-0.5 transition flex flex-col ${
+                  className={`group cursor-pointer bg-white rounded-3xl border overflow-hidden transition-all duration-200 flex flex-col ${
                     sellerIsVip
-                      ? 'border-amber-400 ring-1 ring-amber-300/60'
+                      ? 'border-amber-400 ring-2 ring-amber-300/60 shadow-md shadow-amber-200/50 hover:shadow-lg hover:shadow-amber-200/80 hover:-translate-y-1'
                       : isWish
-                      ? 'border-pink-200'
-                      : 'border-[#F3E8D2]'
+                      ? 'border-pink-200 shadow-xs hover:shadow-md hover:-translate-y-0.5'
+                      : 'border-[#F3E8D2] shadow-xs hover:shadow-md hover:-translate-y-0.5'
                   } ${isCompleted ? 'opacity-75' : ''}`}
                 >
                   <div
-                    className={`relative aspect-square flex items-center justify-center overflow-hidden ${
+                    className={`relative aspect-[4/3] flex items-center justify-center overflow-hidden ${
                       isWish ? 'bg-pink-50/60' : 'bg-[#FDF8EC]'
                     }`}
                   >
                     {coverImg ? (
-                      <img src={coverImg} alt={item.title} className="w-full h-full object-cover" />
+                      <img
+                        src={coverImg}
+                        alt={item.title}
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                      />
                     ) : (
                       <div className="flex flex-col items-center text-[#C4B5A0] px-4 text-center">
                         {isWish ? (
                           <>
-                            <HeartHandshake className="w-10 h-10 mb-1 text-pink-400" />
+                            <HeartHandshake className="w-9 h-9 mb-1 text-pink-400" />
                             <span className="text-xs text-pink-600 font-bold">島民許願徵求中</span>
                           </>
                         ) : (
                           <>
-                            <ImageIcon className="w-10 h-10 mb-1" />
+                            <ImageIcon className="w-9 h-9 mb-1" />
                             <span className="text-xs">無圖片</span>
                           </>
                         )}
@@ -1190,27 +1246,32 @@ export default function HomePage() {
                       </div>
                     )}
 
-                    <div className="absolute top-3 left-3 flex items-center gap-1">
+                    <div className="absolute top-2.5 left-2.5 flex items-center gap-1 flex-wrap">
                       {item.rarity && <RarityBadge rarity={item.rarity as RarityType} />}
+                      {sellerIsVip && (
+                        <span className="px-2 py-0.5 rounded-lg bg-gradient-to-r from-amber-500 to-orange-500 text-white text-[10px] font-bold shadow-xs whitespace-nowrap">
+                          ✨ VIP 置頂
+                        </span>
+                      )}
                       {isWish && (
-                        <span className="px-2 py-0.5 rounded-lg bg-pink-500 text-white text-[10px] font-bold shadow-2xs">
+                        <span className="px-2 py-0.5 rounded-lg bg-pink-500 text-white text-[10px] font-bold shadow-2xs whitespace-nowrap">
                           🙏 徵求
                         </span>
                       )}
                     </div>
 
-                    <div className="absolute top-3 right-3 flex items-center gap-1.5">
-                      <span className="px-2 py-1 rounded-full bg-black/55 text-white text-[10px] font-medium flex items-center gap-1">
-                        <Clock className="w-3 h-3" /> 剩 {hoursLeft}h
+                    <div className="absolute top-2.5 right-2.5 flex items-center gap-1.5">
+                      <span className="px-2 py-1 rounded-full bg-black/50 backdrop-blur-xs text-white text-[10px] font-medium flex items-center gap-1 whitespace-nowrap">
+                        <Clock className="w-3 h-3" /> {hoursLeft}h
                       </span>
 
                       <button
                         onClick={(e) => handleToggleFavorite(e, item.id)}
                         title={isFav ? '取消收藏' : '加入收藏'}
-                        className={`p-1.5 rounded-full shadow-sm transition ${
+                        className={`p-1.5 rounded-full backdrop-blur-xs shadow-xs transition ${
                           isFav
                             ? 'bg-pink-500 text-white'
-                            : 'bg-white/90 text-[#8C7B6B] hover:text-pink-500'
+                            : 'bg-white/85 text-[#8C7B6B] hover:text-pink-500'
                         }`}
                       >
                         <Heart className={`w-3.5 h-3.5 ${isFav ? 'fill-current' : ''}`} />
@@ -1220,7 +1281,7 @@ export default function HomePage() {
                         <button
                           onClick={(e) => handleDeleteItem(e, item.id)}
                           title="刪除貼文"
-                          className="p-1.5 rounded-full bg-red-500 hover:bg-red-600 text-white shadow-sm transition"
+                          className="p-1.5 rounded-full bg-red-500/90 hover:bg-red-600 text-white shadow-xs transition"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
@@ -1230,7 +1291,9 @@ export default function HomePage() {
 
                   <div className="p-4 flex-1 flex flex-col justify-between">
                     <div>
-                      <h3 className="font-bold text-base mb-1.5 line-clamp-1">{item.title}</h3>
+                      <h3 className="font-bold text-base mb-2 line-clamp-1 text-[#4A4238]">
+                        {item.title}
+                      </h3>
                       <div
                         className={`border rounded-2xl p-2.5 mb-3 ${
                           isWish
@@ -1239,33 +1302,41 @@ export default function HomePage() {
                         }`}
                       >
                         <span
-                          className={`text-[11px] font-semibold block mb-0.5 ${
+                          className={`text-[11px] font-bold block mb-0.5 ${
                             isWish ? 'text-pink-600' : 'text-[#D97706]'
                           }`}
                         >
                           {isWish ? '可提供交換籌碼：' : '想換物品：'}
                         </span>
-                        <p className="text-xs text-[#4A4238] line-clamp-2">
+                        <p className="text-xs text-[#4A4238] line-clamp-2 leading-relaxed">
                           {item.wanted_items || '歡迎留言報價'}
                         </p>
                       </div>
                     </div>
 
-                    <div className="flex items-center justify-between pt-2 border-t border-[#F7EFE0] text-xs text-[#8C7B6B]">
-                      <div className="flex items-center gap-1 min-w-0">
-                        {sellerIsVip && (
-                          <span className="px-1.5 py-0.2 rounded-full bg-amber-500 text-white text-[9px] font-bold shrink-0">
-                            👑VIP
-                          </span>
-                        )}
-                        <span className="truncate max-w-[80px] font-medium">{sellerName}</span>
-                        <span className="text-[10px] text-emerald-700 font-bold shrink-0">
-                          👍{sellerInfo?.good_reviews || 0}
+                    <div className="pt-2.5 border-t border-[#F7EFE0] space-y-2">
+                      <div className="flex items-center justify-between gap-1.5 text-xs">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          {sellerIsVip && (
+                            <span className="px-1.5 py-0.5 rounded-md bg-gradient-to-r from-amber-500 to-yellow-500 text-white text-[10px] font-bold whitespace-nowrap shrink-0">
+                              👑 VIP
+                            </span>
+                          )}
+                          <span className="font-bold text-[#4A4238] truncate">{sellerName}</span>
+                        </div>
+                        <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-bold whitespace-nowrap shrink-0">
+                          👍 {sellerInfo?.good_reviews || 0}
                         </span>
                       </div>
-                      <span className="inline-flex items-center gap-1 text-[#D97706] font-medium shrink-0">
-                        <MessageCircle className="w-3.5 h-3.5" /> 詳情 / 私訊
-                      </span>
+
+                      <div className="flex items-center justify-between text-[11px] text-[#8C7B6B]">
+                        <span className="font-mono truncate">
+                          ID: {sellerInfo?.game_id || '---'}
+                        </span>
+                        <span className="inline-flex items-center gap-1 text-[#D97706] font-bold whitespace-nowrap shrink-0 group-hover:translate-x-0.5 transition-transform">
+                          <MessageCircle className="w-3.5 h-3.5" /> 詳情 / 私訊
+                        </span>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1276,11 +1347,11 @@ export default function HomePage() {
       </main>
 
       {/* 頁尾免責與交易安全警語 */}
-      <footer className="border-t border-[#F3E8D2] bg-white/70 py-6 px-4 mt-10">
+      <footer className="border-t border-[#F3E8D2] bg-white/70 py-6 px-4 mt-10 pb-[calc(1.5rem+env(safe-area-inset-bottom))]">
         <div className="max-w-6xl mx-auto text-center space-y-2.5">
           <div className="flex items-center justify-center gap-2 flex-wrap">
             <div className="inline-flex items-center gap-1.5 text-xs font-bold text-amber-800 bg-[#FEF3C7] px-3.5 py-1.5 rounded-full">
-              <AlertTriangle className="w-4 h-4 text-[#D97706]" />
+              <AlertTriangle className="w-4 h-4 text-[#D97706] shrink-0" />
               交易安全與平台免責聲明
             </div>
             <button
@@ -1290,7 +1361,7 @@ export default function HomePage() {
               }}
               className="inline-flex items-center gap-1 text-xs font-bold text-[#6E6254] hover:text-[#D97706] bg-white border border-[#E6D8C3] px-3.5 py-1.5 rounded-full transition"
             >
-              <Lightbulb className="w-3.5 h-3.5 text-[#F59E0B]" /> 功能許願板 & 贊助支持
+              <Lightbulb className="w-3.5 h-3.5 text-[#F59E0B] shrink-0" /> 功能許願板 & 贊助 VIP
             </button>
           </div>
           <p className="text-xs text-[#8C7B6B] max-w-3xl mx-auto leading-relaxed">
@@ -1338,16 +1409,16 @@ export default function HomePage() {
       {user && showMyMarketModal && (
         <div
           onClick={() => setShowMyMarketModal(false)}
-          className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4"
+          className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4"
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="bg-white rounded-3xl max-w-xl w-full max-h-[88vh] flex flex-col border border-[#F3E8D2] shadow-2xl overflow-hidden"
+            className="bg-white rounded-3xl max-w-xl w-full max-h-[90dvh] flex flex-col border border-[#F3E8D2] shadow-2xl overflow-hidden"
           >
-            <div className="px-6 py-4 bg-[#FFFDF7] border-b border-[#F3E8D2] flex items-center justify-between">
+            <div className="px-5 py-3.5 bg-[#FFFDF7] border-b border-[#F3E8D2] flex items-center justify-between shrink-0">
               <div className="flex items-center gap-2">
                 <Store className="w-5 h-5 text-[#F59E0B]" />
-                <h2 className="font-bold text-lg">我的市集與追蹤收藏</h2>
+                <h2 className="font-bold text-base sm:text-lg">我的市集與追蹤收藏</h2>
               </div>
               <button
                 onClick={() => setShowMyMarketModal(false)}
@@ -1357,10 +1428,10 @@ export default function HomePage() {
               </button>
             </div>
 
-            <div className="p-5 overflow-y-auto space-y-5">
+            <div className="p-4 sm:p-5 overflow-y-auto space-y-4">
               <div className="bg-[#FFFDF7] border border-[#F3E8D2] rounded-2xl p-4">
                 <div className="flex items-center justify-between flex-wrap gap-2 text-xs text-[#8C7B6B] mb-3">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <span>
                       遊戲 ID：<strong className="text-[#4A4238] font-mono">{myProfile?.game_id}</strong>
                     </span>
@@ -1382,7 +1453,7 @@ export default function HomePage() {
                     )}
                   </div>
                   <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold">
-                    👍 累計交換好評：{myProfile?.good_reviews || 0} 次
+                    👍 累計好評：{myProfile?.good_reviews || 0} 次
                   </span>
                 </div>
 
@@ -1392,14 +1463,14 @@ export default function HomePage() {
                     value={editGameName}
                     onChange={(e) => setEditGameName(e.target.value)}
                     placeholder="修改遊戲名稱..."
-                    className="flex-1 px-3.5 py-2 rounded-xl bg-white border border-[#E6D8C3] text-xs focus:outline-none focus:border-[#F59E0B]"
+                    className="flex-1 min-w-0 px-3.5 py-2 rounded-xl bg-white border border-[#E6D8C3] text-xs focus:outline-none focus:border-[#F59E0B]"
                   />
                   <button
                     type="submit"
                     disabled={savingName || !editGameName.trim()}
-                    className="px-4 py-2 rounded-xl bg-[#F59E0B] hover:bg-[#D97706] text-white text-xs font-bold disabled:opacity-50"
+                    className="px-3.5 py-2 rounded-xl bg-[#F59E0B] hover:bg-[#D97706] text-white text-xs font-bold whitespace-nowrap shrink-0 disabled:opacity-50"
                   >
-                    {savingName ? '儲存中...' : '更新遊戲名稱'}
+                    {savingName ? '儲存中...' : '更新名稱'}
                   </button>
                 </form>
               </div>
@@ -1442,7 +1513,7 @@ export default function HomePage() {
                         <div className="min-w-0">
                           <div className="flex items-center gap-1.5">
                             <span
-                              className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                              className={`text-[10px] px-2 py-0.5 rounded-full font-bold whitespace-nowrap shrink-0 ${
                                 item.status === 'completed'
                                   ? 'bg-emerald-100 text-emerald-700'
                                   : 'bg-amber-100 text-amber-800'
@@ -1464,7 +1535,7 @@ export default function HomePage() {
                         <div className="flex items-center gap-1.5 shrink-0">
                           <button
                             onClick={() => handleToggleItemStatus(item)}
-                            className="px-2.5 py-1.5 rounded-xl bg-white border border-[#E6D8C3] hover:border-[#F59E0B] text-xs font-bold text-[#4A4238]"
+                            className="px-2.5 py-1.5 rounded-xl bg-white border border-[#E6D8C3] hover:border-[#F59E0B] text-xs font-bold text-[#4A4238] whitespace-nowrap"
                           >
                             {item.status === 'completed'
                               ? '重新上架'
@@ -1500,7 +1571,7 @@ export default function HomePage() {
                     >
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5">
-                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-pink-100 text-pink-700 font-bold">
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-pink-100 text-pink-700 font-bold whitespace-nowrap shrink-0">
                             {item.post_type === 'wish' ? '🙏 許願' : '🔄 交換'}
                           </span>
                           <span className="font-bold text-sm truncate">{item.title}</span>
@@ -1529,16 +1600,16 @@ export default function HomePage() {
       {isAdmin && showUsersModal && (
         <div
           onClick={() => setShowUsersModal(false)}
-          className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4"
+          className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4"
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="bg-white rounded-3xl max-w-2xl w-full max-h-[85vh] flex flex-col border border-[#F3E8D2] shadow-2xl overflow-hidden"
+            className="bg-white rounded-3xl max-w-2xl w-full max-h-[90dvh] flex flex-col border border-[#F3E8D2] shadow-2xl overflow-hidden"
           >
-            <div className="px-6 py-4 bg-[#FFFDF7] border-b border-[#F3E8D2] flex items-center justify-between">
+            <div className="px-5 py-3.5 bg-[#FFFDF7] border-b border-[#F3E8D2] flex items-center justify-between shrink-0">
               <div className="flex items-center gap-2">
                 <Users className="w-5 h-5 text-[#F59E0B]" />
-                <h2 className="font-bold text-lg">
+                <h2 className="font-bold text-base sm:text-lg">
                   已註冊島民名冊（共 {usersList.length} 人）
                 </h2>
               </div>
@@ -1614,7 +1685,7 @@ export default function HomePage() {
                       <div className="flex items-center gap-1.5 flex-wrap shrink-0">
                         <button
                           onClick={() => handleToggleVipUser(u)}
-                          className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition ${
+                          className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold whitespace-nowrap transition ${
                             targetIsVip
                               ? 'bg-gray-200 hover:bg-gray-300 text-gray-700'
                               : 'bg-amber-500 hover:bg-amber-600 text-white'
@@ -1626,7 +1697,7 @@ export default function HomePage() {
 
                         <button
                           onClick={() => handleToggleBanUser(u)}
-                          className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition ${
+                          className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold whitespace-nowrap transition ${
                             u.is_banned
                               ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
                               : 'bg-red-100 hover:bg-red-200 text-red-700'
@@ -1649,31 +1720,31 @@ export default function HomePage() {
       {activeItem && (
         <div
           onClick={() => setActiveItem(null)}
-          className="fixed inset-0 z-40 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4"
+          className="fixed inset-0 z-40 bg-black/50 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4"
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="bg-white rounded-3xl max-w-lg w-full max-h-[90vh] overflow-y-auto border border-[#F3E8D2] shadow-xl p-6"
+            className="bg-white rounded-3xl max-w-lg w-full max-h-[90dvh] overflow-y-auto border border-[#F3E8D2] shadow-xl p-4 sm:p-6"
           >
-            <div className="flex items-start justify-between gap-3 mb-4">
-              <div>
-                <div className="flex items-center flex-wrap gap-2 mb-1">
+            <div className="flex items-start justify-between gap-2.5 mb-4">
+              <div className="min-w-0">
+                <div className="flex items-center flex-wrap gap-1.5 mb-1">
                   {activeItem.rarity && <RarityBadge rarity={activeItem.rarity as RarityType} />}
                   {isUserVip(usersMap[activeItem.user_id]) && (
-                    <span className="px-2 py-0.5 rounded-full bg-amber-500 text-white text-[10px] font-bold">
+                    <span className="px-2 py-0.5 rounded-full bg-amber-500 text-white text-[10px] font-bold whitespace-nowrap">
                       👑 VIP 島主
                     </span>
                   )}
-                  <span className="text-xs font-bold text-[#4A4238]">
+                  <span className="text-xs font-bold text-[#4A4238] truncate">
                     {getDisplayName(activeItem.user_id)}
                   </span>
-                  <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold flex items-center gap-0.5">
+                  <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold flex items-center gap-0.5 whitespace-nowrap">
                     <ThumbsUp className="w-3 h-3" /> {usersMap[activeItem.user_id]?.good_reviews || 0}
                   </span>
                 </div>
 
                 {usersMap[activeItem.user_id]?.game_id && (
-                  <div className="flex items-center gap-1.5 mt-1 mb-1">
+                  <div className="flex items-center gap-1.5 mt-1 mb-1 flex-wrap">
                     <span className="text-xs text-[#8C7B6B]">
                       遊戲 ID：
                       <strong className="font-mono text-[#4A4238]">
@@ -1685,7 +1756,7 @@ export default function HomePage() {
                       onClick={(e) =>
                         handleCopyGameId(e, usersMap[activeItem.user_id].game_id)
                       }
-                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#FFFDF7] border border-[#E6D8C3] hover:border-[#F59E0B] text-[11px] font-bold text-[#6E6254] transition"
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#FFFDF7] border border-[#E6D8C3] hover:border-[#F59E0B] text-[11px] font-bold text-[#6E6254] whitespace-nowrap transition"
                     >
                       {copiedId === usersMap[activeItem.user_id].game_id ? (
                         <>
@@ -1700,10 +1771,10 @@ export default function HomePage() {
                   </div>
                 )}
 
-                <h2 className="text-xl font-bold mt-1">{activeItem.title}</h2>
+                <h2 className="text-lg sm:text-xl font-bold mt-1 break-words">{activeItem.title}</h2>
               </div>
 
-              <div className="flex items-center gap-1.5 flex-wrap justify-end">
+              <div className="flex items-center gap-1.5 flex-wrap justify-end shrink-0">
                 <button
                   onClick={(e) => handleToggleFavorite(e, activeItem.id)}
                   className={`p-2 rounded-full border transition ${
@@ -1723,7 +1794,7 @@ export default function HomePage() {
                 {user && user.id === activeItem.user_id && (
                   <button
                     onClick={() => handleToggleItemStatus(activeItem)}
-                    className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-bold transition ${
+                    className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-full text-xs font-bold whitespace-nowrap transition ${
                       activeItem.status === 'completed'
                         ? 'bg-amber-100 text-amber-800'
                         : 'bg-emerald-500 hover:bg-emerald-600 text-white'
@@ -1733,8 +1804,8 @@ export default function HomePage() {
                     {activeItem.status === 'completed'
                       ? '重新上架'
                       : activeItem.post_type === 'wish'
-                      ? '標記已徵得'
-                      : '標記已換出'}
+                      ? '已徵得'
+                      : '已換出'}
                   </button>
                 )}
 
@@ -1756,7 +1827,7 @@ export default function HomePage() {
                       setChatContextItem(itemContext);
                       setShowChatModal(true);
                     }}
-                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-[#FEF3C7] hover:bg-[#FDE68A] text-[#B45309] text-xs font-bold transition"
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-[#FEF3C7] hover:bg-[#FDE68A] text-[#B45309] text-xs font-bold whitespace-nowrap transition"
                   >
                     <MessageSquareHeart className="w-3.5 h-3.5" /> 1v1 私訊
                   </button>
@@ -1765,7 +1836,7 @@ export default function HomePage() {
                 {(isAdmin || (user && user.id === activeItem.user_id)) && (
                   <button
                     onClick={(e) => handleDeleteItem(e, activeItem.id)}
-                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-red-500 hover:bg-red-600 text-white text-xs font-bold transition"
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-full bg-red-500 hover:bg-red-600 text-white text-xs font-bold whitespace-nowrap transition"
                   >
                     <Trash2 className="w-3.5 h-3.5" /> 刪除
                   </button>
@@ -1787,7 +1858,7 @@ export default function HomePage() {
                     <div
                       key={i}
                       onClick={() => setZoomedImage(img)}
-                      className="relative group cursor-zoom-in w-44 h-44 rounded-2xl border border-[#F3E8D2] overflow-hidden shrink-0"
+                      className="relative group cursor-zoom-in w-36 h-36 sm:w-44 sm:h-44 rounded-2xl border border-[#F3E8D2] overflow-hidden shrink-0"
                     >
                       <img src={img} alt="item" className="w-full h-full object-cover" />
                       <div className="absolute inset-0 bg-black/0 group-hover:bg-black/25 transition flex items-center justify-center">
@@ -1807,15 +1878,15 @@ export default function HomePage() {
                 <span className="font-bold text-[#D97706]">
                   {activeItem.post_type === 'wish' ? '可提供交換籌碼：' : '想交換物品：'}
                 </span>
-                <span>{activeItem.wanted_items}</span>
+                <span className="break-words">{activeItem.wanted_items}</span>
               </div>
               {activeItem.description && (
                 <div>
                   <span className="font-bold text-[#8C7B6B]">補充說明：</span>
-                  <span>{activeItem.description}</span>
+                  <span className="break-words">{activeItem.description}</span>
                 </div>
               )}
-              <div className="flex items-center justify-between pt-1">
+              <div className="flex items-center justify-between pt-1 flex-wrap gap-2">
                 <span className="text-xs text-[#8C7B6B]">
                   ⏳ 距離自動下架還有約 {getRemainingHours(activeItem)} 小時
                 </span>
@@ -1841,15 +1912,15 @@ export default function HomePage() {
                     placeholder="請簡述異常原因（例如：現金買賣、疑似詐騙...）"
                     value={reportReason}
                     onChange={(e) => setReportReason(e.target.value)}
-                    className="flex-1 px-3 py-1.5 rounded-xl bg-white border border-red-200 text-xs focus:outline-none focus:border-red-400"
+                    className="flex-1 min-w-0 px-3 py-1.5 rounded-xl bg-white border border-red-200 text-xs focus:outline-none focus:border-red-400"
                     required
                   />
                   <button
                     type="submit"
                     disabled={submittingReport}
-                    className="px-3 py-1.5 rounded-xl bg-red-500 hover:bg-red-600 text-white text-xs font-bold disabled:opacity-50"
+                    className="px-3 py-1.5 rounded-xl bg-red-500 hover:bg-red-600 text-white text-xs font-bold whitespace-nowrap shrink-0 disabled:opacity-50"
                   >
-                    送出檢舉
+                    送出
                   </button>
                 </form>
               )}
@@ -1861,7 +1932,7 @@ export default function HomePage() {
                 <MessageCircle className="w-4 h-4 text-[#F59E0B]" /> 公開留言詢問 ({comments.length})
               </h3>
 
-              <div className="space-y-2.5 max-h-48 overflow-y-auto mb-4 pr-1">
+              <div className="space-y-2.5 max-h-44 overflow-y-auto mb-4 pr-1">
                 {comments.length === 0 ? (
                   <p className="text-xs text-[#A39585] text-center py-4">
                     還沒有人留言，也可以直接點右上角「1v1 私訊」找對方洽談喔！
@@ -1883,7 +1954,7 @@ export default function HomePage() {
                           })}
                         </span>
                       </div>
-                      <p className="text-[#4A4238]">{c.content}</p>
+                      <p className="text-[#4A4238] break-words">{c.content}</p>
                     </div>
                   ))
                 )}
@@ -1902,12 +1973,12 @@ export default function HomePage() {
                   value={newComment}
                   onChange={(e) => setNewComment(e.target.value)}
                   disabled={!user || isBanned || sendingComment}
-                  className="flex-1 px-4 py-2.5 rounded-full bg-[#FFFDF7] border border-[#E6D8C3] text-xs focus:outline-none focus:border-[#F59E0B]"
+                  className="flex-1 min-w-0 px-4 py-2.5 rounded-full bg-[#FFFDF7] border border-[#E6D8C3] text-xs focus:outline-none focus:border-[#F59E0B]"
                 />
                 <button
                   type="submit"
                   disabled={!user || isBanned || sendingComment || !newComment.trim()}
-                  className="px-4 py-2.5 rounded-full bg-[#F59E0B] hover:bg-[#D97706] text-white text-xs font-bold flex items-center gap-1 disabled:opacity-50"
+                  className="px-4 py-2.5 rounded-full bg-[#F59E0B] hover:bg-[#D97706] text-white text-xs font-bold flex items-center gap-1 whitespace-nowrap shrink-0 disabled:opacity-50"
                 >
                   <Send className="w-3.5 h-3.5" /> 送出
                 </button>
@@ -1936,14 +2007,14 @@ export default function HomePage() {
         >
           <button
             onClick={() => setZoomedImage(null)}
-            className="absolute top-5 right-5 p-2.5 rounded-full bg-white/20 hover:bg-white/40 text-white transition"
+            className="absolute top-4 right-4 p-2.5 rounded-full bg-white/20 hover:bg-white/40 text-white transition"
           >
             <X className="w-6 h-6" />
           </button>
           <img
             src={zoomedImage}
             alt="放大檢視"
-            className="max-w-full max-h-[90vh] object-contain rounded-2xl shadow-2xl"
+            className="max-w-full max-h-[88dvh] object-contain rounded-2xl shadow-2xl"
           />
         </div>
       )}
