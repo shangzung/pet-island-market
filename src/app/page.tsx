@@ -18,20 +18,18 @@ import {
   X,
   Send,
   ShieldCheck,
+  ZoomIn,
 } from 'lucide-react';
 
 const CATEGORIES = [
   { id: 'all', label: '全部' },
-  { id: 'fashion', label: '👗 服裝' },
-  { id: 'furniture', label: '🪑 家具' },
-  { id: 'background', label: '🏞️ 背景' },
+  { id: 'fashion', label: '🧑 HOM' },
   { id: 'island', label: '🏝️ 島嶼裝飾' },
   { id: 'pet', label: '🐾 寵物' },
-  { id: 'item', label: '🧪 道具' },
   { id: 'other', label: '📦 其他' },
 ];
 
-const RARITIES = ['全部', 'UR', 'SSR', 'SR', 'R', 'N'];
+const RARITIES = ['全部', 'SR', 'R', 'N'];
 
 export default function HomePage() {
   const supabase = createClient();
@@ -47,8 +45,9 @@ export default function HomePage() {
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [selectedRarity, setSelectedRarity] = useState('全部');
 
-  // 留言彈窗狀態
+  // 留言彈窗與圖片放大狀態
   const [activeItem, setActiveItem] = useState<any | null>(null);
+  const [zoomedImage, setZoomedImage] = useState<string | null>(null);
   const [comments, setComments] = useState<any[]>([]);
   const [newComment, setNewComment] = useState('');
   const [sendingComment, setSendingComment] = useState(false);
@@ -62,7 +61,6 @@ export default function HomePage() {
     const { data: { user: currentUser } } = await supabase.auth.getUser();
     setUser(currentUser);
 
-    // 讀取會員資料表與管理者權限
     const { data: usersData } = await supabase
       .from('users')
       .select('id, nickname, is_admin');
@@ -79,7 +77,6 @@ export default function HomePage() {
       setUsersMap(map);
     }
 
-    // 讀取商品並自動過濾已超過 48 小時的道具
     const { data: itemsData } = await supabase
       .from('items')
       .select('*')
@@ -96,7 +93,6 @@ export default function HomePage() {
       setItems(validItems);
     }
 
-    // 若已登入，讀取個人通知
     if (currentUser) {
       const { data: notifData } = await supabase
         .from('notifications')
@@ -114,13 +110,11 @@ export default function HomePage() {
     fetchData();
   }, []);
 
-  // 計算 48 小時剩餘時間
   const getRemainingHours = (item: any) => {
     const expireTime = item.expires_at
       ? new Date(item.expires_at).getTime()
       : new Date(item.created_at).getTime() + 48 * 60 * 60 * 1000;
-    const diffHours = Math.max(0, Math.ceil((expireTime - Date.now()) / (1000 * 60 * 60)));
-    return diffHours;
+    return Math.max(0, Math.ceil((expireTime - Date.now()) / (1000 * 60 * 60)));
   };
 
   // 刪除商品（本人或管理者）
@@ -137,7 +131,6 @@ export default function HomePage() {
     }
   };
 
-  // 開啟商品卡片詳情與留言板
   const openItemModal = async (item: any) => {
     setActiveItem(item);
     setComments([]);
@@ -149,7 +142,6 @@ export default function HomePage() {
     if (data) setComments(data);
   };
 
-  // 送出留言並發送通知給賣家
   const handleSendComment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) {
@@ -175,7 +167,6 @@ export default function HomePage() {
       setComments((prev) => [...prev, inserted]);
       setNewComment('');
 
-      // 如果不是賣家自己留言，就發送通知給賣家
       if (activeItem.user_id !== user.id) {
         await supabase.from('notifications').insert({
           user_id: activeItem.user_id,
@@ -191,7 +182,6 @@ export default function HomePage() {
     setSendingComment(false);
   };
 
-  // 標記所有通知為已讀
   const markNotificationsRead = async () => {
     setShowNotifMenu(!showNotifMenu);
     if (!user) return;
@@ -261,7 +251,6 @@ export default function HomePage() {
           <div className="flex items-center gap-2.5">
             {user ? (
               <>
-                {/* 通知鈴鐺 */}
                 <div className="relative">
                   <button
                     onClick={markNotificationsRead}
@@ -406,7 +395,6 @@ export default function HomePage() {
                   onClick={() => openItemModal(item)}
                   className="cursor-pointer bg-white rounded-3xl border border-[#F3E8D2] overflow-hidden shadow-sm hover:shadow-md hover:-translate-y-0.5 transition flex flex-col"
                 >
-                  {/* 商品圖片 */}
                   <div className="relative aspect-square bg-[#FDF8EC] flex items-center justify-center overflow-hidden">
                     {coverImg ? (
                       <img src={coverImg} alt={item.title} className="w-full h-full object-cover" />
@@ -417,14 +405,12 @@ export default function HomePage() {
                       </div>
                     )}
 
-                    {/* 左上稀有度 */}
                     {item.rarity && (
                       <div className="absolute top-3 left-3">
                         <RarityBadge rarity={item.rarity as RarityType} />
                       </div>
                     )}
 
-                    {/* 右上 48h 倒數 & 管理者/本人刪除按鈕 */}
                     <div className="absolute top-3 right-3 flex items-center gap-1.5">
                       <span className="px-2 py-1 rounded-full bg-black/55 text-white text-[10px] font-medium flex items-center gap-1">
                         <Clock className="w-3 h-3" /> 剩 {hoursLeft}h
@@ -441,7 +427,6 @@ export default function HomePage() {
                     </div>
                   </div>
 
-                  {/* 商品資訊 */}
                   <div className="p-4 flex-1 flex flex-col justify-between">
                     <div>
                       <h3 className="font-bold text-base mb-1.5 line-clamp-1">{item.title}</h3>
@@ -458,7 +443,7 @@ export default function HomePage() {
                     <div className="flex items-center justify-between pt-2 border-t border-[#F7EFE0] text-xs text-[#8C7B6B]">
                       <span>@{sellerName}</span>
                       <span className="inline-flex items-center gap-1 text-[#D97706] font-medium">
-                        <MessageCircle className="w-3.5 h-3.5" /> 點擊詢問
+                        <MessageCircle className="w-3.5 h-3.5" /> 點擊詢問 / 看大圖
                       </span>
                     </div>
                   </div>
@@ -489,25 +474,45 @@ export default function HomePage() {
                 </div>
                 <h2 className="text-xl font-bold">{activeItem.title}</h2>
               </div>
-              <button
-                onClick={() => setActiveItem(null)}
-                className="p-1.5 rounded-full bg-[#FFFDF7] border border-[#E6D8C3] text-[#8C7B6B] hover:text-[#4A4238]"
-              >
-                <X className="w-5 h-5" />
-              </button>
+
+              <div className="flex items-center gap-2">
+                {(isAdmin || (user && user.id === activeItem.user_id)) && (
+                  <button
+                    onClick={(e) => handleDeleteItem(e, activeItem.id)}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-red-500 hover:bg-red-600 text-white text-xs font-bold transition"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" /> 刪除
+                  </button>
+                )}
+                <button
+                  onClick={() => setActiveItem(null)}
+                  className="p-1.5 rounded-full bg-[#FFFDF7] border border-[#E6D8C3] text-[#8C7B6B] hover:text-[#4A4238]"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
             </div>
 
-            {/* 圖片展示 */}
+            {/* 圖片展示（點擊可放大） */}
             {Array.isArray(activeItem.images) && activeItem.images.length > 0 && (
-              <div className="flex gap-2 overflow-x-auto pb-2 mb-4">
-                {activeItem.images.map((img: string, i: number) => (
-                  <img
-                    key={i}
-                    src={img}
-                    alt="item"
-                    className="w-40 h-40 object-cover rounded-2xl border border-[#F3E8D2] shrink-0"
-                  />
-                ))}
+              <div className="mb-4">
+                <div className="flex gap-2.5 overflow-x-auto pb-2">
+                  {activeItem.images.map((img: string, i: number) => (
+                    <div
+                      key={i}
+                      onClick={() => setZoomedImage(img)}
+                      className="relative group cursor-zoom-in w-44 h-44 rounded-2xl border border-[#F3E8D2] overflow-hidden shrink-0"
+                    >
+                      <img src={img} alt="item" className="w-full h-full object-cover" />
+                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/25 transition flex items-center justify-center">
+                        <span className="opacity-0 group-hover:opacity-100 bg-black/70 text-white text-[11px] px-2.5 py-1 rounded-full flex items-center gap-1 transition">
+                          <ZoomIn className="w-3.5 h-3.5" /> 點擊放大
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-[11px] text-[#8C7B6B] mt-1">💡 點擊圖片可放大檢視完整細節</p>
               </div>
             )}
 
@@ -548,7 +553,12 @@ export default function HomePage() {
                         <span className="font-bold text-[#4A4238]">
                           @{usersMap[c.user_id] || '島民玩家'}
                         </span>
-                        <span>{new Date(c.created_at).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' })}</span>
+                        <span>
+                          {new Date(c.created_at).toLocaleTimeString('zh-TW', {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                        </span>
                       </div>
                       <p className="text-[#4A4238]">{c.content}</p>
                     </div>
@@ -575,6 +585,26 @@ export default function HomePage() {
               </form>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* 全螢幕圖片放大燈箱 */}
+      {zoomedImage && (
+        <div
+          onClick={() => setZoomedImage(null)}
+          className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4 cursor-zoom-out"
+        >
+          <button
+            onClick={() => setZoomedImage(null)}
+            className="absolute top-5 right-5 p-2.5 rounded-full bg-white/20 hover:bg-white/40 text-white transition"
+          >
+            <X className="w-6 h-6" />
+          </button>
+          <img
+            src={zoomedImage}
+            alt="放大檢視"
+            className="max-w-full max-h-[90vh] object-contain rounded-2xl shadow-2xl"
+          />
         </div>
       )}
     </div>

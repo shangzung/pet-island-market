@@ -8,16 +8,13 @@ import { ArrowLeft, Upload, X, Sparkles, Image as ImageIcon } from 'lucide-react
 import Link from 'next/link';
 
 const CATEGORIES = [
-  { id: 'fashion', label: '👗 服裝' },
-  { id: 'furniture', label: '🪑 家具' },
-  { id: 'background', label: '🏞️ 背景' },
+  { id: 'fashion', label: '🧑 HOM' },
   { id: 'island', label: '🏝️ 島嶼裝飾' },
   { id: 'pet', label: '🐾 寵物' },
-  { id: 'item', label: '🧪 道具' },
   { id: 'other', label: '📦 其他' },
 ];
 
-const RARITIES: RarityType[] = ['UR', 'SSR', 'SR', 'R', 'N'];
+const RARITIES: RarityType[] = ['SR', 'R', 'N'];
 
 export default function NewItemPage() {
   const router = useRouter();
@@ -65,7 +62,6 @@ export default function NewItemPage() {
     setPreviews(updatedFiles.map((file) => URL.createObjectURL(file)));
   };
 
-  // 前端自動壓縮並轉為 WebP
   const compressImage = (file: File): Promise<Blob> => {
     return new Promise((resolve) => {
       const img = new window.Image();
@@ -118,7 +114,6 @@ export default function NewItemPage() {
         uploadedUrls.push(publicUrlData.publicUrl);
       }
 
-      // 改由後端 API 檢查帳號 + IP 每日限發 1 篇並寫入 48 小時到期時間
       const response = await fetch('/api/items', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -175,7 +170,7 @@ export default function NewItemPage() {
               </label>
               <input
                 type="text"
-                placeholder="例如：星夜夢境長裙 / 櫻花樹島嶼背景"
+                placeholder="例如：星夜夢境長裙 / 櫻花樹島嶼裝飾"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 className="w-full px-4 py-3 rounded-2xl bg-[#FFFDF7] border border-[#E6D8C3] focus:outline-none focus:border-[#F59E0B]"
