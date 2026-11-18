@@ -7,6 +7,7 @@ import { RarityBadge, RarityType } from '@/components/RarityBadge';
 import { GameProfileModal } from '@/components/GameProfileModal';
 import { DirectChatModal } from '@/components/DirectChatModal';
 import { AdminDashboardModal } from '@/components/AdminDashboardModal';
+import { CommunitySupportModal } from '@/components/CommunitySupportModal';
 import { checkSensitiveContent } from '@/lib/contentFilter';
 import { removeUnusedStorageImages } from '@/lib/storageCleanup';
 import {
@@ -41,6 +42,8 @@ import {
   Flame,
   BarChart3,
   PartyPopper,
+  Lightbulb,
+  Crown,
 } from 'lucide-react';
 
 const CATEGORIES = [
@@ -62,6 +65,7 @@ export default function HomePage() {
     game_id?: string;
     game_name?: string;
     good_reviews?: number;
+    vip_expires_at?: string | null;
   } | null>(null);
   const [needBindProfile, setNeedBindProfile] = useState(false);
 
@@ -82,10 +86,15 @@ export default function HomePage() {
   // 成交快報輪播索引
   const [tickerIndex, setTickerIndex] = useState(0);
 
-  // 全站公告狀態
-  const [announcement, setAnnouncement] = useState<{ content: string; is_active: boolean }>({
+  // 全站公告與贊助連結狀態
+  const [announcement, setAnnouncement] = useState<{
+    content: string;
+    is_active: boolean;
+    sponsor_url?: string;
+  }>({
     content: '',
     is_active: false,
+    sponsor_url: '',
   });
   const [showEditAnnounce, setShowEditAnnounce] = useState(false);
   const [editAnnounceText, setEditAnnounceText] = useState('');
@@ -98,6 +107,10 @@ export default function HomePage() {
   const [showAdminDashboard, setShowAdminDashboard] = useState(false);
   const [showMyMarketModal, setShowMyMarketModal] = useState(false);
   const [myMarketTab, setMyMarketTab] = useState<'my_items' | 'favorites'>('my_items');
+
+  // 功能許願與贊助 VIP 彈窗
+  const [showSupportModal, setShowSupportModal] = useState(false);
+  const [supportModalTab, setSupportModalTab] = useState<'feedback' | 'vip'>('feedback');
 
   // 我的市集修改名稱狀態
   const [editGameName, setEditGameName] = useState('');
@@ -122,15 +135,20 @@ export default function HomePage() {
   const [chatContextItem, setChatContextItem] = useState<any | null>(null);
   const [unreadDmCount, setUnreadDmCount] = useState(0);
 
+  const isUserVip = (u: any) => {
+    if (!u?.vip_expires_at) return false;
+    return new Date(u.vip_expires_at).getTime() > Date.now();
+  };
+
   const fetchData = async () => {
     setLoading(true);
     const { data: { user: currentUser } } = await supabase.auth.getUser();
     setUser(currentUser);
 
-    // 讀取全站公告
+    // 讀取全站公告與贊助連結
     const { data: annData } = await supabase
       .from('site_announcements')
-      .select('content, is_active')
+      .select('content, is_active, sponsor_url')
       .eq('id', 1)
       .maybeSingle();
     if (annData) {
@@ -139,7 +157,7 @@ export default function HomePage() {
       setEditAnnounceActive(annData.is_active);
     }
 
-    // 讀取最近 48 小時搜尋關鍵字（用於計算熱門排行榜）
+    // 讀取最近 48 小時搜尋關鍵字
     const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
     const { data: searchLogsData } = await supabase
       .from('search_logs')
@@ -153,7 +171,9 @@ export default function HomePage() {
     // 讀取會員清單
     const { data: usersData } = await supabase
       .from('users')
-      .select('id, nickname, game_id, game_name, is_admin, is_banned, good_reviews, created_at')
+      .select(
+        'id, nickname, game_id, game_name, is_admin, is_banned, vip_expires_at, good_reviews, created_at'
+      )
       .order('created_at', { ascending: false });
 
     const map: Record<string, any> = {};
@@ -171,6 +191,7 @@ export default function HomePage() {
             game_id: u.game_id,
             game_name: u.game_name,
             good_reviews: u.good_reviews || 0,
+            vip_expires_at: u.vip_expires_at,
           });
           setEditGameName(u.game_name || '');
           if (!u.game_id || !u.game_name) {
@@ -185,7 +206,7 @@ export default function HomePage() {
       setNeedBindProfile(true);
     }
 
-    // 讀取有效貼文（48 小時內）
+    // 讀取有效貼文
     const { data: itemsData } = await supabase
       .from('items')
       .select('*')
@@ -281,7 +302,6 @@ export default function HomePage() {
     };
   }, [user]);
 
-  // 計算 48 小時熱門搜尋與許願排行榜 TOP 5
   const trendingKeywords = useMemo(() => {
     const freq: Record<string, number> = {};
 
@@ -307,7 +327,6 @@ export default function HomePage() {
       .map(([word]) => word);
   }, [items, recentSearches]);
 
-  // 近期成交動態跑馬燈資料
   const completedTickers = useMemo(() => {
     return items.filter((i) => i.status === 'completed').slice(0, 10);
   }, [items]);
@@ -320,7 +339,6 @@ export default function HomePage() {
     return () => clearInterval(timer);
   }, [completedTickers.length]);
 
-  // 搜尋停頓 1.5 秒後紀錄熱門搜尋關鍵字
   useEffect(() => {
     const kw = searchQuery.trim();
     if (kw.length < 2 || kw.length > 15) return;
@@ -382,14 +400,64 @@ export default function HomePage() {
       });
 
     if (!error) {
-      setAnnouncement({ content: editAnnounceText.trim(), is_active: editAnnounceActive });
+      setAnnouncement((prev) => ({
+        ...prev,
+        content: editAnnounceText.trim(),
+        is_active: editAnnounceActive,
+      }));
       setShowEditAnnounce(false);
     } else {
       alert('公告儲存失敗：' + error.message);
     }
   };
 
-  // 管理者停權 / 解除停權（同步維護跨帳號遊戲 ID 黑名單）
+  const handleSaveSponsorUrl = async (newUrl: string) => {
+    const { error } = await supabase
+      .from('site_announcements')
+      .upsert({
+        id: 1,
+        content: announcement.content || '🎉 歡迎來到寵物島市集！',
+        is_active: announcement.is_active,
+        sponsor_url: newUrl,
+        updated_at: new Date().toISOString(),
+      });
+    if (!error) {
+      setAnnouncement((prev) => ({ ...prev, sponsor_url: newUrl }));
+    }
+  };
+
+  // 管理者一鍵開通 / 取消 30 天 VIP
+  const handleToggleVipUser = async (targetUser: any) => {
+    const currentlyVip = isUserVip(targetUser);
+    const nextVipExpires = currentlyVip
+      ? null
+      : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+
+    const msg = currentlyVip
+      ? `確定要取消「${targetUser.game_name || targetUser.nickname}」的 VIP 資格嗎？`
+      : `確定要為「${targetUser.game_name || targetUser.nickname}」開通 30 天 👑 VIP 島主特權嗎？`;
+    if (!confirm(msg)) return;
+
+    const { error } = await supabase
+      .from('users')
+      .update({ vip_expires_at: nextVipExpires })
+      .eq('id', targetUser.id);
+
+    if (!error) {
+      setUsersList((prev) =>
+        prev.map((u) =>
+          u.id === targetUser.id ? { ...u, vip_expires_at: nextVipExpires } : u
+        )
+      );
+      setUsersMap((prev) => ({
+        ...prev,
+        [targetUser.id]: { ...prev[targetUser.id], vip_expires_at: nextVipExpires },
+      }));
+    } else {
+      alert('設定 VIP 失敗：' + error.message);
+    }
+  };
+
   const handleToggleBanUser = async (targetUser: any) => {
     const nextBanned = !targetUser.is_banned;
     const actionText = nextBanned
@@ -454,7 +522,6 @@ export default function HomePage() {
     }
   };
 
-  // 刪除貼文並智慧清理未入庫的 Storage 實體圖片
   const handleDeleteItem = async (e: React.MouseEvent, itemId: string) => {
     e.stopPropagation();
     if (!confirm('確定要刪除這筆貼文嗎？刪除後無法復原喔！')) return;
@@ -633,6 +700,7 @@ export default function HomePage() {
 
   const myItems = user ? items.filter((i) => i.user_id === user.id) : [];
   const myFavoriteItems = items.filter((i) => favoriteIds.includes(i.id));
+  const firstAdminUser = usersList.find((u) => u.is_admin);
 
   return (
     <div className="min-h-screen bg-[#FFFDF7] text-[#4A4238] flex flex-col">
@@ -749,6 +817,11 @@ export default function HomePage() {
                 className="hidden md:inline-flex items-center gap-1.5 ml-2 px-3 py-1.5 rounded-full bg-white border border-[#E6D8C3] hover:border-[#F59E0B] text-xs transition"
               >
                 <Store className="w-3.5 h-3.5 text-[#F59E0B]" />
+                {isUserVip(myProfile) && (
+                  <span className="px-1.5 py-0.2 rounded-full bg-amber-500 text-white text-[10px] font-bold">
+                    👑 VIP
+                  </span>
+                )}
                 <span className="font-bold">{myProfile.game_name}</span>
                 <span className="text-[#8C7B6B]">(ID:{myProfile.game_id})</span>
                 <span className="text-emerald-700 font-bold">👍{myProfile.good_reviews || 0}</span>
@@ -778,6 +851,19 @@ export default function HomePage() {
 
           {/* 右側操作按鈕 */}
           <div className="flex items-center gap-2">
+            {/* 功能許願留言板 & 贊助 VIP 入口按鈕（所有人皆可點開） */}
+            <button
+              onClick={() => {
+                setSupportModalTab('feedback');
+                setShowSupportModal(true);
+              }}
+              className="inline-flex items-center gap-1 px-3 py-2 rounded-full bg-white border border-[#E6D8C3] hover:border-[#F59E0B] text-xs font-bold text-[#6E6254] hover:text-[#4A4238] transition"
+              title="許願新功能 & 贊助升級 VIP"
+            >
+              <Lightbulb className="w-3.5 h-3.5 text-[#F59E0B]" />
+              <span className="hidden lg:inline">建議 / 贊助</span>
+            </button>
+
             {user ? (
               <>
                 {isAdmin && (
@@ -946,7 +1032,7 @@ export default function HomePage() {
 
       {/* 主內容區 */}
       <main className="max-w-6xl mx-auto px-4 py-5 flex-1 w-full">
-        {/* 🔥 48 小時熱門搜尋與許願排行榜 (Trend Board) */}
+        {/* 🔥 48 小時熱門搜尋與許願排行榜 */}
         {trendingKeywords.length > 0 && (
           <div className="mb-5 px-4 py-2.5 rounded-2xl bg-white border border-[#F3E8D2] flex items-center gap-2 flex-wrap">
             <span className="inline-flex items-center gap-1 text-xs font-bold text-orange-600 shrink-0">
@@ -996,8 +1082,19 @@ export default function HomePage() {
           <div className="flex items-center gap-2.5 flex-wrap">
             <button
               type="button"
+              onClick={() => {
+                setSupportModalTab('vip');
+                setShowSupportModal(true);
+              }}
+              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-gradient-to-r from-amber-500 to-yellow-500 text-white text-xs font-bold shadow-2xs hover:opacity-95 transition"
+            >
+              <Crown className="w-3.5 h-3.5" /> 升級 VIP 島主
+            </button>
+
+            <button
+              type="button"
               onClick={() => isAdmin && setShowUsersModal(true)}
-              title={isAdmin ? '點擊查看完整島民註冊名冊與停權管理' : '寵物島市集總註冊人數'}
+              title={isAdmin ? '點擊查看完整島民註冊名冊、VIP 開通與停權管理' : '寵物島市集總註冊人數'}
               className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold border transition ${
                 isAdmin
                   ? 'bg-[#FEF3C7] border-[#F59E0B] text-[#B45309] hover:bg-[#FDE68A] cursor-pointer'
@@ -1042,6 +1139,7 @@ export default function HomePage() {
               const coverImg =
                 Array.isArray(item.images) && item.images.length > 0 ? item.images[0] : null;
               const sellerInfo = usersMap[item.user_id];
+              const sellerIsVip = isUserVip(sellerInfo);
               const sellerName = getDisplayName(item.user_id);
               const canDelete = isAdmin || (user && user.id === item.user_id);
               const hoursLeft = getRemainingHours(item);
@@ -1054,7 +1152,11 @@ export default function HomePage() {
                   key={item.id}
                   onClick={() => openItemModal(item)}
                   className={`cursor-pointer bg-white rounded-3xl border overflow-hidden shadow-sm hover:shadow-md hover:-translate-y-0.5 transition flex flex-col ${
-                    isWish ? 'border-pink-200' : 'border-[#F3E8D2]'
+                    sellerIsVip
+                      ? 'border-amber-400 ring-1 ring-amber-300/60'
+                      : isWish
+                      ? 'border-pink-200'
+                      : 'border-[#F3E8D2]'
                   } ${isCompleted ? 'opacity-75' : ''}`}
                 >
                   <div
@@ -1150,8 +1252,13 @@ export default function HomePage() {
                     </div>
 
                     <div className="flex items-center justify-between pt-2 border-t border-[#F7EFE0] text-xs text-[#8C7B6B]">
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        <span className="truncate max-w-[90px] font-medium">{sellerName}</span>
+                      <div className="flex items-center gap-1 min-w-0">
+                        {sellerIsVip && (
+                          <span className="px-1.5 py-0.2 rounded-full bg-amber-500 text-white text-[9px] font-bold shrink-0">
+                            👑VIP
+                          </span>
+                        )}
+                        <span className="truncate max-w-[80px] font-medium">{sellerName}</span>
                         <span className="text-[10px] text-emerald-700 font-bold shrink-0">
                           👍{sellerInfo?.good_reviews || 0}
                         </span>
@@ -1170,16 +1277,52 @@ export default function HomePage() {
 
       {/* 頁尾免責與交易安全警語 */}
       <footer className="border-t border-[#F3E8D2] bg-white/70 py-6 px-4 mt-10">
-        <div className="max-w-6xl mx-auto text-center space-y-2">
-          <div className="inline-flex items-center gap-1.5 text-xs font-bold text-amber-800 bg-[#FEF3C7] px-3.5 py-1.5 rounded-full">
-            <AlertTriangle className="w-4 h-4 text-[#D97706]" />
-            交易安全與平台免責聲明
+        <div className="max-w-6xl mx-auto text-center space-y-2.5">
+          <div className="flex items-center justify-center gap-2 flex-wrap">
+            <div className="inline-flex items-center gap-1.5 text-xs font-bold text-amber-800 bg-[#FEF3C7] px-3.5 py-1.5 rounded-full">
+              <AlertTriangle className="w-4 h-4 text-[#D97706]" />
+              交易安全與平台免責聲明
+            </div>
+            <button
+              onClick={() => {
+                setSupportModalTab('feedback');
+                setShowSupportModal(true);
+              }}
+              className="inline-flex items-center gap-1 text-xs font-bold text-[#6E6254] hover:text-[#D97706] bg-white border border-[#E6D8C3] px-3.5 py-1.5 rounded-full transition"
+            >
+              <Lightbulb className="w-3.5 h-3.5 text-[#F59E0B]" /> 功能許願板 & 贊助支持
+            </button>
           </div>
           <p className="text-xs text-[#8C7B6B] max-w-3xl mx-auto leading-relaxed">
             本網站（寵物島市集）僅提供遊戲玩家道具交換資訊刊登與溝通便利之媒合平台，不介入雙方實際遊戲內道具轉移，亦不提供任何交易擔保、保管或賠償責任。交換前請務必核對對方遊戲 ID 與累計好評紀錄，嚴禁進行私下金錢買賣或帳號交易；若發生任何交易糾紛，請自行承擔風險並透過遊戲官方客服處理。
           </p>
         </div>
       </footer>
+
+      {/* 功能許願板 & 贊助 VIP 彈窗 */}
+      {showSupportModal && (
+        <CommunitySupportModal
+          currentUser={user}
+          isAdmin={isAdmin}
+          isBanned={isBanned}
+          myDisplayName={myProfile?.game_name || '島民玩家'}
+          myGameId={myProfile?.game_id || ''}
+          sponsorUrl={announcement.sponsor_url || ''}
+          adminUserId={firstAdminUser?.id}
+          initialTab={supportModalTab}
+          onClose={() => setShowSupportModal(false)}
+          onOpenChatWithAdmin={(adminId) => {
+            setChatTargetUserId(adminId);
+            setChatContextItem({
+              id: 'vip-support',
+              title: `申請贊助開通 👑 VIP 島主（遊戲 ID：${myProfile?.game_id || '請填寫'}）`,
+              wanted_items: '請站長提供安全的贊助收款方式，謝謝！',
+            });
+            setShowChatModal(true);
+          }}
+          onSaveSponsorUrl={handleSaveSponsorUrl}
+        />
+      )}
 
       {/* 站長數據戰情室彈窗 */}
       {isAdmin && showAdminDashboard && (
@@ -1216,10 +1359,28 @@ export default function HomePage() {
 
             <div className="p-5 overflow-y-auto space-y-5">
               <div className="bg-[#FFFDF7] border border-[#F3E8D2] rounded-2xl p-4">
-                <div className="flex items-center justify-between text-xs text-[#8C7B6B] mb-3">
-                  <span>
-                    遊戲 ID：<strong className="text-[#4A4238] font-mono">{myProfile?.game_id}</strong>
-                  </span>
+                <div className="flex items-center justify-between flex-wrap gap-2 text-xs text-[#8C7B6B] mb-3">
+                  <div className="flex items-center gap-2">
+                    <span>
+                      遊戲 ID：<strong className="text-[#4A4238] font-mono">{myProfile?.game_id}</strong>
+                    </span>
+                    {isUserVip(myProfile) ? (
+                      <span className="px-2 py-0.5 rounded-full bg-amber-500 text-white text-[10px] font-bold">
+                        👑 VIP 到期：{new Date(myProfile!.vip_expires_at!).toLocaleDateString('zh-TW')}
+                      </span>
+                    ) : (
+                      <button
+                        onClick={() => {
+                          setShowMyMarketModal(false);
+                          setSupportModalTab('vip');
+                          setShowSupportModal(true);
+                        }}
+                        className="text-[11px] text-[#D97706] underline font-bold"
+                      >
+                        升級 👑 VIP
+                      </button>
+                    )}
+                  </div>
                   <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold">
                     👍 累計交換好評：{myProfile?.good_reviews || 0} 次
                   </span>
@@ -1364,7 +1525,7 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* 管理者專屬：即時註冊島民名冊與一鍵停權視窗 */}
+      {/* 管理者專屬：即時註冊島民名冊（支援一鍵開通 30 天 VIP & 停權封鎖 ID） */}
       {isAdmin && showUsersModal && (
         <div
           onClick={() => setShowUsersModal(false)}
@@ -1372,7 +1533,7 @@ export default function HomePage() {
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="bg-white rounded-3xl max-w-xl w-full max-h-[85vh] flex flex-col border border-[#F3E8D2] shadow-2xl overflow-hidden"
+            className="bg-white rounded-3xl max-w-2xl w-full max-h-[85vh] flex flex-col border border-[#F3E8D2] shadow-2xl overflow-hidden"
           >
             <div className="px-6 py-4 bg-[#FFFDF7] border-b border-[#F3E8D2] flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -1390,72 +1551,95 @@ export default function HomePage() {
             </div>
 
             <div className="p-4 overflow-y-auto space-y-2.5">
-              {usersList.map((u, index) => (
-                <div
-                  key={u.id}
-                  className={`p-3.5 rounded-2xl border flex items-center justify-between gap-3 text-xs ${
-                    u.is_banned
-                      ? 'bg-red-50/70 border-red-200'
-                      : 'bg-[#FFFDF7] border-[#F3E8D2]'
-                  }`}
-                >
-                  <div>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="px-2 py-0.5 rounded-full bg-[#FEF3C7] text-[#B45309] font-bold">
-                        #{usersList.length - index}
-                      </span>
-                      <span className="font-bold text-sm text-[#4A4238]">
-                        {u.game_name || u.nickname || '未設定名稱'}
-                      </span>
-                      <span className="text-[11px] text-emerald-700 font-bold">
-                        👍 {u.good_reviews || 0}
-                      </span>
-                      {u.is_admin && (
-                        <span className="px-2 py-0.5 rounded-full bg-amber-600 text-white text-[10px] font-bold">
-                          管理者
+              {usersList.map((u, index) => {
+                const targetIsVip = isUserVip(u);
+                return (
+                  <div
+                    key={u.id}
+                    className={`p-3.5 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs ${
+                      u.is_banned
+                        ? 'bg-red-50/70 border-red-200'
+                        : targetIsVip
+                        ? 'bg-amber-50/60 border-amber-300'
+                        : 'bg-[#FFFDF7] border-[#F3E8D2]'
+                    }`}
+                  >
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="px-2 py-0.5 rounded-full bg-[#FEF3C7] text-[#B45309] font-bold">
+                          #{usersList.length - index}
                         </span>
-                      )}
-                      {u.is_banned && (
-                        <span className="px-2 py-0.5 rounded-full bg-red-600 text-white text-[10px] font-bold">
-                          已停權（ID黑名單）
+                        <span className="font-bold text-sm text-[#4A4238]">
+                          {u.game_name || u.nickname || '未設定名稱'}
                         </span>
-                      )}
+                        <span className="text-[11px] text-emerald-700 font-bold">
+                          👍 {u.good_reviews || 0}
+                        </span>
+                        {targetIsVip && (
+                          <span className="px-2 py-0.5 rounded-full bg-amber-500 text-white text-[10px] font-bold">
+                            👑 VIP（至 {new Date(u.vip_expires_at).toLocaleDateString('zh-TW')}）
+                          </span>
+                        )}
+                        {u.is_admin && (
+                          <span className="px-2 py-0.5 rounded-full bg-amber-700 text-white text-[10px] font-bold">
+                            管理者
+                          </span>
+                        )}
+                        {u.is_banned && (
+                          <span className="px-2 py-0.5 rounded-full bg-red-600 text-white text-[10px] font-bold">
+                            已停權（ID黑名單）
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[#8C7B6B] mt-1">
+                        遊戲 ID：
+                        <span className="font-mono font-bold text-[#4A4238]">
+                          {u.game_id || '尚未綁定'}
+                        </span>
+                        <span className="ml-2 text-[11px] text-[#A39585]">
+                          註冊：
+                          {u.created_at
+                            ? new Date(u.created_at).toLocaleString('zh-TW', {
+                                month: '2-digit',
+                                day: '2-digit',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              })
+                            : ''}
+                        </span>
+                      </div>
                     </div>
-                    <div className="text-[#8C7B6B] mt-1">
-                      遊戲 ID：
-                      <span className="font-mono font-bold text-[#4A4238]">
-                        {u.game_id || '尚未綁定'}
-                      </span>
-                    </div>
-                  </div>
 
-                  <div className="flex flex-col items-end gap-1.5 shrink-0">
-                    <span className="text-[11px] text-[#A39585]">
-                      {u.created_at
-                        ? new Date(u.created_at).toLocaleString('zh-TW', {
-                            month: '2-digit',
-                            day: '2-digit',
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })
-                        : ''}
-                    </span>
                     {!u.is_admin && (
-                      <button
-                        onClick={() => handleToggleBanUser(u)}
-                        className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition ${
-                          u.is_banned
-                            ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                            : 'bg-red-100 hover:bg-red-200 text-red-700'
-                        }`}
-                      >
-                        <Ban className="w-3 h-3" />
-                        {u.is_banned ? '解除停權' : '停權並封鎖ID'}
-                      </button>
+                      <div className="flex items-center gap-1.5 flex-wrap shrink-0">
+                        <button
+                          onClick={() => handleToggleVipUser(u)}
+                          className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition ${
+                            targetIsVip
+                              ? 'bg-gray-200 hover:bg-gray-300 text-gray-700'
+                              : 'bg-amber-500 hover:bg-amber-600 text-white'
+                          }`}
+                        >
+                          <Crown className="w-3 h-3" />
+                          {targetIsVip ? '取消 VIP' : '開通30天VIP'}
+                        </button>
+
+                        <button
+                          onClick={() => handleToggleBanUser(u)}
+                          className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition ${
+                            u.is_banned
+                              ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                              : 'bg-red-100 hover:bg-red-200 text-red-700'
+                          }`}
+                        >
+                          <Ban className="w-3 h-3" />
+                          {u.is_banned ? '解除停權' : '停權封鎖ID'}
+                        </button>
+                      </div>
                     )}
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </div>
@@ -1475,6 +1659,11 @@ export default function HomePage() {
               <div>
                 <div className="flex items-center flex-wrap gap-2 mb-1">
                   {activeItem.rarity && <RarityBadge rarity={activeItem.rarity as RarityType} />}
+                  {isUserVip(usersMap[activeItem.user_id]) && (
+                    <span className="px-2 py-0.5 rounded-full bg-amber-500 text-white text-[10px] font-bold">
+                      👑 VIP 島主
+                    </span>
+                  )}
                   <span className="text-xs font-bold text-[#4A4238]">
                     {getDisplayName(activeItem.user_id)}
                   </span>

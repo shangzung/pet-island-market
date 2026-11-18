@@ -37,7 +37,7 @@ export async function POST(request: Request) {
 
     const body = await request.json();
 
-    // 敏感關鍵字自動過濾（防現金買賣 / 代儲 / 外掛）
+    // 敏感關鍵字自動過濾
     const combinedText = `${body.title || ''} ${body.wanted_items || ''} ${body.description || ''}`;
     const filterResult = checkSensitiveContent(combinedText);
     if (!filterResult.isClean) {
@@ -49,9 +49,10 @@ export async function POST(request: Request) {
       );
     }
 
+    // 檢查管理員、停權與 VIP 到期狀態
     const { data: profile } = await supabase
       .from('users')
-      .select('is_admin, is_banned')
+      .select('is_admin, is_banned, vip_expires_at')
       .eq('id', user.id)
       .single();
 
@@ -63,27 +64,50 @@ export async function POST(request: Request) {
     }
 
     const isAdmin = profile?.is_admin === true;
+    const isVip =
+      profile?.vip_expires_at && new Date(profile.vip_expires_at).getTime() > Date.now();
 
+    // 檢查 24 小時內發文上限（一般會員 1 篇 / VIP 會員 5 篇 / 管理員無限制）
     if (!isAdmin) {
       const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
-      const { data: recentItems } = await supabase
-        .from('items')
-        .select('id')
-        .gte('created_at', twentyFourHoursAgo)
-        .or(`user_id.eq.${user.id},ip_address.eq.${ip}`);
+      if (isVip) {
+        const { data: vipRecentItems } = await supabase
+          .from('items')
+          .select('id')
+          .eq('user_id', user.id)
+          .gte('created_at', twentyFourHoursAgo);
 
-      if (recentItems && recentItems.length > 0) {
-        return NextResponse.json(
-          { error: '防多開限制：每個帳號與同一個網路 IP 每 24 小時只能發布 1 篇貼文喔！' },
-          { status: 429 }
-        );
+        if (vipRecentItems && vipRecentItems.length >= 5) {
+          return NextResponse.json(
+            { error: '👑 VIP 島主每 24 小時最多可發布 5 篇貼文，今日額度已滿喔！' },
+            { status: 429 }
+          );
+        }
+      } else {
+        const { data: recentItems } = await supabase
+          .from('items')
+          .select('id')
+          .gte('created_at', twentyFourHoursAgo)
+          .or(`user_id.eq.${user.id},ip_address.eq.${ip}`);
+
+        if (recentItems && recentItems.length > 0) {
+          return NextResponse.json(
+            {
+              error:
+                '一般島民每 24 小時限發布 1 篇貼文喔！（升級 👑 VIP 島主可享每日 5 篇＋保留 7 天特權）',
+            },
+            { status: 429 }
+          );
+        }
       }
     }
 
     await supabase.rpc('cleanup_expired_items');
 
-    const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString();
+    // VIP 與管理員貼文保留 7 天 (168 小時)，一般會員保留 48 小時
+    const durationHours = isAdmin || isVip ? 168 : 48;
+    const expiresAt = new Date(Date.now() + durationHours * 60 * 60 * 1000).toISOString();
 
     const { error: insertError } = await supabase.from('items').insert({
       user_id: user.id,
