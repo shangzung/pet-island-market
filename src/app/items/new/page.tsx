@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { RarityBadge, RarityType } from '@/components/RarityBadge';
-import { ArrowLeft, Upload, X, Sparkles, Image as ImageIcon } from 'lucide-react';
+import { ArrowLeft, Upload, X, Sparkles, Image as ImageIcon, Repeat, HeartHandshake } from 'lucide-react';
 import Link from 'next/link';
 
 const CATEGORIES = [
@@ -21,6 +21,7 @@ export default function NewItemPage() {
   const supabase = createClient();
 
   const [userId, setUserId] = useState<string | null>(null);
+  const [postType, setPostType] = useState<'offer' | 'wish'>('offer');
   const [title, setTitle] = useState('');
   const [category, setCategory] = useState('fashion');
   const [rarity, setRarity] = useState<RarityType>('SR');
@@ -47,7 +48,7 @@ export default function NewItemPage() {
     if (!e.target.files) return;
     const selected = Array.from(e.target.files);
     if (files.length + selected.length > 3) {
-      setErrorMsg('免費會員最多可上傳 3 張圖片喔！');
+      setErrorMsg('最多可上傳 3 張圖片喔！');
       return;
     }
     setErrorMsg('');
@@ -87,7 +88,11 @@ export default function NewItemPage() {
     e.preventDefault();
     if (!userId) return;
     if (!title.trim() || !wantedItems.trim()) {
-      setErrorMsg('請填寫「道具名稱」與「想交換的物品」喔！');
+      setErrorMsg(
+        postType === 'offer'
+          ? '請填寫「持有道具名稱」與「想交換的物品」喔！'
+          : '請填寫「想徵求的道具名稱」與「願意提供的籌碼」喔！'
+      );
       return;
     }
 
@@ -118,6 +123,7 @@ export default function NewItemPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          post_type: postType,
           title: title.trim(),
           category,
           rarity,
@@ -152,9 +158,35 @@ export default function NewItemPage() {
         </Link>
 
         <div className="bg-white rounded-3xl shadow-sm border border-[#F3E8D2] p-6 sm:p-8">
-          <div className="flex items-center gap-2 mb-6">
+          <div className="flex items-center gap-2 mb-5">
             <Sparkles className="w-6 h-6 text-[#F59E0B]" />
-            <h1 className="text-2xl font-bold">發布交換道具</h1>
+            <h1 className="text-2xl font-bold">發布寵物島貼文</h1>
+          </div>
+
+          {/* 切換貼文類型：交換市集 vs 島民許願池 */}
+          <div className="grid grid-cols-2 gap-3 mb-6 p-1.5 rounded-2xl bg-[#FFFDF7] border border-[#E6D8C3]">
+            <button
+              type="button"
+              onClick={() => setPostType('offer')}
+              className={`py-2.5 px-3 rounded-xl text-sm font-bold flex items-center justify-center gap-1.5 transition ${
+                postType === 'offer'
+                  ? 'bg-[#F59E0B] text-white shadow-sm'
+                  : 'text-[#6E6254] hover:text-[#4A4238]'
+              }`}
+            >
+              <Repeat className="w-4 h-4" /> 🔄 交換市集（我有道具）
+            </button>
+            <button
+              type="button"
+              onClick={() => setPostType('wish')}
+              className={`py-2.5 px-3 rounded-xl text-sm font-bold flex items-center justify-center gap-1.5 transition ${
+                postType === 'wish'
+                  ? 'bg-pink-500 text-white shadow-sm'
+                  : 'text-[#6E6254] hover:text-[#4A4238]'
+              }`}
+            >
+              <HeartHandshake className="w-4 h-4" /> 🙏 島民許願池（徵求）
+            </button>
           </div>
 
           {errorMsg && (
@@ -166,11 +198,16 @@ export default function NewItemPage() {
           <form onSubmit={handleSubmit} className="space-y-6">
             <div>
               <label className="block text-sm font-semibold mb-2">
-                道具名稱 <span className="text-red-400">*</span>
+                {postType === 'offer' ? '持有道具名稱' : '想徵求的道具名稱'}{' '}
+                <span className="text-red-400">*</span>
               </label>
               <input
                 type="text"
-                placeholder="例如：星夜夢境長裙 / 櫻花樹島嶼裝飾"
+                placeholder={
+                  postType === 'offer'
+                    ? '例如：星夜夢境長裙 / 櫻花樹島嶼裝飾'
+                    : '例如：急徵！復刻池 SR 夢幻星空長髮'
+                }
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 className="w-full px-4 py-3 rounded-2xl bg-[#FFFDF7] border border-[#E6D8C3] focus:outline-none focus:border-[#F59E0B]"
@@ -217,11 +254,18 @@ export default function NewItemPage() {
 
             <div>
               <label className="block text-sm font-semibold mb-2">
-                想交換的物品（許願清單） <span className="text-red-400">*</span>
+                {postType === 'offer'
+                  ? '想交換的物品（許願清單）'
+                  : '我願意提供的交換籌碼'}{' '}
+                <span className="text-red-400">*</span>
               </label>
               <input
                 type="text"
-                placeholder="例如：同稀有度髮型、復刻池 SR 眼睛、或留言報價"
+                placeholder={
+                  postType === 'offer'
+                    ? '例如：同稀有度髮型、復刻池 SR 眼睛、或留言報價'
+                    : '例如：可提供圖鑑內任意 2 件 SR 替換、或私訊看清單'
+                }
                 value={wantedItems}
                 onChange={(e) => setWantedItems(e.target.value)}
                 className="w-full px-4 py-3 rounded-2xl bg-[#FFFDF7] border border-[#E6D8C3] focus:outline-none focus:border-[#F59E0B]"
@@ -233,7 +277,7 @@ export default function NewItemPage() {
               <label className="block text-sm font-semibold mb-2">補充說明（選填）</label>
               <textarea
                 rows={3}
-                placeholder="可備註遊戲內 ID、可交換時段或複數數量..."
+                placeholder="可備註可交換時段、比例或補充細節..."
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 className="w-full px-4 py-3 rounded-2xl bg-[#FFFDF7] border border-[#E6D8C3] focus:outline-none focus:border-[#F59E0B]"
@@ -243,7 +287,9 @@ export default function NewItemPage() {
             <div>
               <label className="block text-sm font-semibold mb-2 flex items-center gap-1.5">
                 <ImageIcon className="w-4 h-4 text-[#F59E0B]" />
-                道具截圖（最多 3 張，自動壓縮為 WebP）
+                {postType === 'offer'
+                  ? '道具截圖（最多 3 張，自動壓縮為 WebP）'
+                  : '參考圖 / 籌碼截圖（選填，最多 3 張）'}
               </label>
 
               <div className="flex flex-wrap gap-3">
@@ -282,9 +328,17 @@ export default function NewItemPage() {
             <button
               type="submit"
               disabled={submitting}
-              className="w-full py-3.5 rounded-2xl bg-[#F59E0B] hover:bg-[#D97706] text-white font-bold shadow-sm transition disabled:opacity-50"
+              className={`w-full py-3.5 rounded-2xl text-white font-bold shadow-sm transition disabled:opacity-50 ${
+                postType === 'offer'
+                  ? 'bg-[#F59E0B] hover:bg-[#D97706]'
+                  : 'bg-pink-500 hover:bg-pink-600'
+              }`}
             >
-              {submitting ? '正在上傳圖片並發布中...' : '✨ 確認發布到寵物島市集'}
+              {submitting
+                ? '正在上傳並發布中...'
+                : postType === 'offer'
+                ? '✨ 確認發布交換道具'
+                : '🙏 確認發布許願徵求'}
             </button>
           </form>
         </div>

@@ -29,6 +29,12 @@ import {
   Flag,
   ThumbsUp,
   Store,
+  Heart,
+  Megaphone,
+  Repeat,
+  HeartHandshake,
+  Ban,
+  AlertTriangle,
 } from 'lucide-react';
 
 const CATEGORIES = [
@@ -45,6 +51,7 @@ export default function HomePage() {
   const supabase = createClient();
   const [user, setUser] = useState<any>(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [isBanned, setIsBanned] = useState(false);
   const [myProfile, setMyProfile] = useState<{
     game_id?: string;
     game_name?: string;
@@ -53,20 +60,33 @@ export default function HomePage() {
   const [needBindProfile, setNeedBindProfile] = useState(false);
 
   const [items, setItems] = useState<any[]>([]);
+  const [favoriteIds, setFavoriteIds] = useState<string[]>([]);
   const [usersList, setUsersList] = useState<any[]>([]);
   const [usersMap, setUsersMap] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(true);
 
+  // 看板切換（交換市集 offer / 島民許願池 wish）與篩選
+  const [activeBoard, setActiveBoard] = useState<'offer' | 'wish'>('offer');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [selectedRarity, setSelectedRarity] = useState('全部');
   const [showCompleted, setShowCompleted] = useState(false);
+
+  // 全站公告狀態
+  const [announcement, setAnnouncement] = useState<{ content: string; is_active: boolean }>({
+    content: '',
+    is_active: false,
+  });
+  const [showEditAnnounce, setShowEditAnnounce] = useState(false);
+  const [editAnnounceText, setEditAnnounceText] = useState('');
+  const [editAnnounceActive, setEditAnnounceActive] = useState(true);
 
   // 彈窗狀態
   const [activeItem, setActiveItem] = useState<any | null>(null);
   const [zoomedImage, setZoomedImage] = useState<string | null>(null);
   const [showUsersModal, setShowUsersModal] = useState(false);
   const [showMyMarketModal, setShowMyMarketModal] = useState(false);
+  const [myMarketTab, setMyMarketTab] = useState<'my_items' | 'favorites'>('my_items');
 
   // 我的市集修改名稱狀態
   const [editGameName, setEditGameName] = useState('');
@@ -96,9 +116,22 @@ export default function HomePage() {
     const { data: { user: currentUser } } = await supabase.auth.getUser();
     setUser(currentUser);
 
+    // 讀取全站公告
+    const { data: annData } = await supabase
+      .from('site_announcements')
+      .select('content, is_active')
+      .eq('id', 1)
+      .maybeSingle();
+    if (annData) {
+      setAnnouncement(annData);
+      setEditAnnounceText(annData.content);
+      setEditAnnounceActive(annData.is_active);
+    }
+
+    // 讀取會員清單
     const { data: usersData } = await supabase
       .from('users')
-      .select('id, nickname, game_id, game_name, is_admin, good_reviews, created_at')
+      .select('id, nickname, game_id, game_name, is_admin, is_banned, good_reviews, created_at')
       .order('created_at', { ascending: false });
 
     const map: Record<string, any> = {};
@@ -111,6 +144,7 @@ export default function HomePage() {
         if (currentUser && u.id === currentUser.id) {
           foundCurrentUserProfile = true;
           setIsAdmin(u.is_admin === true);
+          setIsBanned(u.is_banned === true);
           setMyProfile({
             game_id: u.game_id,
             game_name: u.game_name,
@@ -129,6 +163,7 @@ export default function HomePage() {
       setNeedBindProfile(true);
     }
 
+    // 讀取有效貼文（48 小時內）
     const { data: itemsData } = await supabase
       .from('items')
       .select('*')
@@ -146,6 +181,16 @@ export default function HomePage() {
     }
 
     if (currentUser) {
+      // 讀取收藏列表
+      const { data: favData } = await supabase
+        .from('favorites')
+        .select('item_id')
+        .eq('user_id', currentUser.id);
+      if (favData) {
+        setFavoriteIds(favData.map((f) => f.item_id));
+      }
+
+      // 讀取通知
       const { data: notifData } = await supabase
         .from('notifications')
         .select('*')
@@ -154,6 +199,7 @@ export default function HomePage() {
         .limit(20);
       if (notifData) setNotifications(notifData);
 
+      // 讀取未讀私訊數
       const { count } = await supabase
         .from('direct_messages')
         .select('*', { count: 'exact', head: true })
@@ -229,7 +275,80 @@ export default function HomePage() {
     return Math.max(0, Math.ceil((expireTime - Date.now()) / (1000 * 60 * 60)));
   };
 
-  // 一鍵複製遊戲 ID
+  // 愛心收藏 / 取消收藏
+  const handleToggleFavorite = async (e: React.MouseEvent, itemId: string) => {
+    e.stopPropagation();
+    if (!user) {
+      alert('請先登入才能使用愛心收藏功能喔！');
+      return;
+    }
+
+    const isFav = favoriteIds.includes(itemId);
+    if (isFav) {
+      const { error } = await supabase
+        .from('favorites')
+        .delete()
+        .eq('user_id', user.id)
+        .eq('item_id', itemId);
+      if (!error) {
+        setFavoriteIds((prev) => prev.filter((id) => id !== itemId));
+      }
+    } else {
+      const { error } = await supabase
+        .from('favorites')
+        .insert({ user_id: user.id, item_id: itemId });
+      if (!error) {
+        setFavoriteIds((prev) => [...prev, itemId]);
+      }
+    }
+  };
+
+  // 管理者儲存全站公告
+  const handleSaveAnnouncement = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const { error } = await supabase
+      .from('site_announcements')
+      .upsert({
+        id: 1,
+        content: editAnnounceText.trim(),
+        is_active: editAnnounceActive,
+        updated_at: new Date().toISOString(),
+      });
+
+    if (!error) {
+      setAnnouncement({ content: editAnnounceText.trim(), is_active: editAnnounceActive });
+      setShowEditAnnounce(false);
+    } else {
+      alert('公告儲存失敗：' + error.message);
+    }
+  };
+
+  // 管理者一鍵停權 / 解除停權
+  const handleToggleBanUser = async (targetUser: any) => {
+    const nextBanned = !targetUser.is_banned;
+    const actionText = nextBanned ? '停權（禁止發文、留言與私訊）' : '解除停權';
+    if (!confirm(`確定要將「${targetUser.game_name || targetUser.nickname}」${actionText}嗎？`)) {
+      return;
+    }
+
+    const { error } = await supabase
+      .from('users')
+      .update({ is_banned: nextBanned })
+      .eq('id', targetUser.id);
+
+    if (!error) {
+      setUsersList((prev) =>
+        prev.map((u) => (u.id === targetUser.id ? { ...u, is_banned: nextBanned } : u))
+      );
+      setUsersMap((prev) => ({
+        ...prev,
+        [targetUser.id]: { ...prev[targetUser.id], is_banned: nextBanned },
+      }));
+    } else {
+      alert('操作失敗：' + error.message);
+    }
+  };
+
   const handleCopyGameId = (e: React.MouseEvent, gameId: string) => {
     e.stopPropagation();
     navigator.clipboard.writeText(gameId);
@@ -237,7 +356,6 @@ export default function HomePage() {
     setTimeout(() => setCopiedId(null), 2000);
   };
 
-  // 標記商品為「已換出」或重新開放「交換中」
   const handleToggleItemStatus = async (item: any) => {
     const nextStatus = item.status === 'completed' ? 'active' : 'completed';
     const { error } = await supabase
@@ -257,10 +375,9 @@ export default function HomePage() {
     }
   };
 
-  // 刪除商品
   const handleDeleteItem = async (e: React.MouseEvent, itemId: string) => {
     e.stopPropagation();
-    if (!confirm('確定要刪除這筆道具嗎？刪除後無法復原喔！')) return;
+    if (!confirm('確定要刪除這筆貼文嗎？刪除後無法復原喔！')) return;
 
     const { error } = await supabase.from('items').delete().eq('id', itemId);
     if (error) {
@@ -271,7 +388,6 @@ export default function HomePage() {
     }
   };
 
-  // 檢舉商品通知管理員
   const handleReportItem = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user || !activeItem || !reportReason.trim()) return;
@@ -296,7 +412,6 @@ export default function HomePage() {
     setSubmittingReport(false);
   };
 
-  // 我的市集：更新遊戲名稱
   const handleUpdateMyName = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user || !editGameName.trim()) return;
@@ -338,6 +453,10 @@ export default function HomePage() {
     e.preventDefault();
     if (!user) {
       alert('請先登入才能留言詢問喔！');
+      return;
+    }
+    if (isBanned) {
+      alert('您的帳號已被停權，無法留言。');
       return;
     }
     if (!newComment.trim() || !activeItem) return;
@@ -396,6 +515,9 @@ export default function HomePage() {
   };
 
   const filteredItems = items.filter((item) => {
+    const itemPostType = item.post_type === 'wish' ? 'wish' : 'offer';
+    if (itemPostType !== activeBoard) return false;
+
     const isItemCompleted = item.status === 'completed';
     if (!showCompleted && isItemCompleted) return false;
 
@@ -411,9 +533,10 @@ export default function HomePage() {
   });
 
   const myItems = user ? items.filter((i) => i.user_id === user.id) : [];
+  const myFavoriteItems = items.filter((i) => favoriteIds.includes(i.id));
 
   return (
-    <div className="min-h-screen bg-[#FFFDF7] text-[#4A4238]">
+    <div className="min-h-screen bg-[#FFFDF7] text-[#4A4238] flex flex-col">
       {/* 首次登入未綁定遊戲 ID / 遊戲名稱時強制彈出設定視窗 */}
       {user && needBindProfile && (
         <GameProfileModal
@@ -424,6 +547,66 @@ export default function HomePage() {
             fetchData();
           }}
         />
+      )}
+
+      {/* 全站公告橫幅 */}
+      {(announcement.is_active || isAdmin) && (
+        <div className="bg-[#FEF3C7] border-b border-[#F59E0B]/30 px-4 py-2 text-xs text-[#92400E]">
+          <div className="max-w-6xl mx-auto flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <Megaphone className="w-4 h-4 text-[#D97706] shrink-0" />
+              <span className="font-medium truncate">
+                {announcement.is_active
+                  ? announcement.content
+                  : '（目前全站公告已隱藏，點擊右側可重新開啟）'}
+              </span>
+            </div>
+            {isAdmin && (
+              <button
+                onClick={() => setShowEditAnnounce(!showEditAnnounce)}
+                className="px-2.5 py-0.5 rounded-full bg-white/80 hover:bg-white border border-[#F59E0B]/40 text-[#B45309] font-bold shrink-0"
+              >
+                編輯公告
+              </button>
+            )}
+          </div>
+
+          {isAdmin && showEditAnnounce && (
+            <form
+              onSubmit={handleSaveAnnouncement}
+              className="max-w-6xl mx-auto mt-2 pt-2 border-t border-[#F59E0B]/20 flex flex-wrap items-center gap-2"
+            >
+              <input
+                type="text"
+                value={editAnnounceText}
+                onChange={(e) => setEditAnnounceText(e.target.value)}
+                placeholder="輸入全站公告內容..."
+                className="flex-1 min-w-[220px] px-3 py-1.5 rounded-xl bg-white border border-[#E6D8C3] text-xs text-[#4A4238]"
+              />
+              <label className="inline-flex items-center gap-1 text-xs font-bold cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={editAnnounceActive}
+                  onChange={(e) => setEditAnnounceActive(e.target.checked)}
+                />
+                顯示公告
+              </label>
+              <button
+                type="submit"
+                className="px-3.5 py-1.5 rounded-xl bg-[#F59E0B] text-white font-bold text-xs"
+              >
+                儲存公告
+              </button>
+            </form>
+          )}
+        </div>
+      )}
+
+      {/* 停權警告橫幅 */}
+      {isBanned && (
+        <div className="bg-red-600 text-white text-xs font-bold text-center py-2 px-4">
+          ⚠️ 您的帳號因違反市集規範已被管理員停權，目前僅供瀏覽，無法發布貼文、留言或使用私訊。
+        </div>
       )}
 
       {/* 頂部導覽列 */}
@@ -446,11 +629,10 @@ export default function HomePage() {
               </div>
             </Link>
 
-            {/* 我的市集個人名片膠囊（點擊可管理自己的道具與名稱） */}
             {user && myProfile?.game_name && (
               <button
                 onClick={() => setShowMyMarketModal(true)}
-                title="點擊打開「我的市集」個人中心"
+                title="點擊打開「我的市集」與收藏清單"
                 className="hidden md:inline-flex items-center gap-1.5 ml-2 px-3 py-1.5 rounded-full bg-white border border-[#E6D8C3] hover:border-[#F59E0B] text-xs transition"
               >
                 <Store className="w-3.5 h-3.5 text-[#F59E0B]" />
@@ -479,7 +661,7 @@ export default function HomePage() {
               <>
                 <button
                   onClick={() => setShowMyMarketModal(true)}
-                  title="我的市集"
+                  title="我的市集與收藏"
                   className="md:hidden p-2.5 rounded-full bg-white border border-[#E6D8C3] text-[#6E6254]"
                 >
                   <Store className="w-4 h-4 text-[#F59E0B]" />
@@ -487,6 +669,10 @@ export default function HomePage() {
 
                 <button
                   onClick={() => {
+                    if (isBanned) {
+                      alert('您的帳號已被停權，無法使用私訊功能。');
+                      return;
+                    }
                     setChatTargetUserId(null);
                     setChatContextItem(null);
                     setShowChatModal(true);
@@ -557,12 +743,14 @@ export default function HomePage() {
                   )}
                 </div>
 
-                <Link
-                  href="/items/new"
-                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-[#F59E0B] hover:bg-[#D97706] text-white text-sm font-bold shadow-sm transition"
-                >
-                  <Plus className="w-4 h-4" /> 發布
-                </Link>
+                {!isBanned && (
+                  <Link
+                    href="/items/new"
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-[#F59E0B] hover:bg-[#D97706] text-white text-sm font-bold shadow-sm transition"
+                  >
+                    <Plus className="w-4 h-4" /> 發布
+                  </Link>
+                )}
                 <button
                   onClick={handleLogout}
                   title="登出"
@@ -582,26 +770,51 @@ export default function HomePage() {
           </div>
         </div>
 
-        {/* 分類標籤列 */}
-        <div className="max-w-6xl mx-auto px-4 pb-3 flex items-center gap-2 overflow-x-auto">
-          {CATEGORIES.map((cat) => (
+        {/* 雙看板切換頁籤（🔄 交換市集 vs 🙏 島民許願池）+ 分類標籤 */}
+        <div className="max-w-6xl mx-auto px-4 pb-3 flex flex-wrap items-center justify-between gap-2.5">
+          <div className="flex items-center gap-1.5 bg-white p-1 rounded-full border border-[#E6D8C3]">
             <button
-              key={cat.id}
-              onClick={() => setSelectedCategory(cat.id)}
-              className={`px-3.5 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition ${
-                selectedCategory === cat.id
-                  ? 'bg-[#F59E0B] text-white shadow-sm'
-                  : 'bg-white border border-[#E6D8C3] text-[#6E6254] hover:border-[#F59E0B]'
+              onClick={() => setActiveBoard('offer')}
+              className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold transition ${
+                activeBoard === 'offer'
+                  ? 'bg-[#F59E0B] text-white shadow-2xs'
+                  : 'text-[#6E6254] hover:text-[#4A4238]'
               }`}
             >
-              {cat.label}
+              <Repeat className="w-3.5 h-3.5" /> 🔄 交換市集
             </button>
-          ))}
+            <button
+              onClick={() => setActiveBoard('wish')}
+              className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold transition ${
+                activeBoard === 'wish'
+                  ? 'bg-pink-500 text-white shadow-2xs'
+                  : 'text-[#6E6254] hover:text-[#4A4238]'
+              }`}
+            >
+              <HeartHandshake className="w-3.5 h-3.5" /> 🙏 島民許願池
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2 overflow-x-auto">
+            {CATEGORIES.map((cat) => (
+              <button
+                key={cat.id}
+                onClick={() => setSelectedCategory(cat.id)}
+                className={`px-3.5 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition ${
+                  selectedCategory === cat.id
+                    ? 'bg-[#2C2520] text-white shadow-sm'
+                    : 'bg-white border border-[#E6D8C3] text-[#6E6254] hover:border-[#F59E0B]'
+                }`}
+              >
+                {cat.label}
+              </button>
+            ))}
+          </div>
         </div>
       </header>
 
       {/* 主內容區 */}
-      <main className="max-w-6xl mx-auto px-4 py-6">
+      <main className="max-w-6xl mx-auto px-4 py-6 flex-1 w-full">
         <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-sm text-[#8C7B6B]">稀有度：</span>
@@ -619,7 +832,6 @@ export default function HomePage() {
               </button>
             ))}
 
-            {/* 顯示已換出開關 */}
             <label className="ml-2 inline-flex items-center gap-1.5 text-xs text-[#6E6254] cursor-pointer select-none">
               <input
                 type="checkbox"
@@ -627,7 +839,7 @@ export default function HomePage() {
                 onChange={(e) => setShowCompleted(e.target.checked)}
                 className="rounded accent-[#F59E0B]"
               />
-              顯示已換出商品
+              顯示已換出 / 已徵得
             </label>
           </div>
 
@@ -635,7 +847,7 @@ export default function HomePage() {
             <button
               type="button"
               onClick={() => isAdmin && setShowUsersModal(true)}
-              title={isAdmin ? '點擊查看完整島民註冊名冊' : '寵物島市集總註冊人數'}
+              title={isAdmin ? '點擊查看完整島民註冊名冊與停權管理' : '寵物島市集總註冊人數'}
               className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold border transition ${
                 isAdmin
                   ? 'bg-[#FEF3C7] border-[#F59E0B] text-[#B45309] hover:bg-[#FDE68A] cursor-pointer'
@@ -644,29 +856,35 @@ export default function HomePage() {
             >
               <Users className="w-3.5 h-3.5 text-[#F59E0B]" />
               已註冊島民：{usersList.length} 人
-              {isAdmin && <span className="underline ml-1">查看名單</span>}
+              {isAdmin && <span className="underline ml-1">管理名單</span>}
             </button>
 
             <span className="text-xs sm:text-sm text-[#8C7B6B]">
-              共 {filteredItems.length} 件道具
+              共 {filteredItems.length} 筆{activeBoard === 'offer' ? '交換' : '許願'}
             </span>
           </div>
         </div>
 
         {/* 商品卡片網格 */}
         {loading ? (
-          <div className="text-center py-20 text-[#8C7B6B]">載入道具中...</div>
+          <div className="text-center py-20 text-[#8C7B6B]">載入資料中...</div>
         ) : filteredItems.length === 0 ? (
           <div className="bg-white rounded-3xl border border-[#F3E8D2] py-16 px-4 text-center">
             <Sparkles className="w-10 h-10 text-[#F59E0B] mx-auto mb-3" />
-            <h2 className="text-lg font-bold mb-1">目前還沒有符合條件的道具喔！</h2>
-            <p className="text-sm text-[#8C7B6B] mb-5">成為第一位上架商品的島民吧 ✨</p>
-            <Link
-              href="/items/new"
-              className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-full bg-[#F59E0B] hover:bg-[#D97706] text-white text-sm font-bold shadow-sm transition"
-            >
-              <Plus className="w-4 h-4" /> 立即發布第一件道具
-            </Link>
+            <h2 className="text-lg font-bold mb-1">
+              {activeBoard === 'offer'
+                ? '目前交換市集還沒有符合條件的道具喔！'
+                : '目前許願池還沒有符合條件的徵求文喔！'}
+            </h2>
+            <p className="text-sm text-[#8C7B6B] mb-5">成為第一位發布貼文的島民吧 ✨</p>
+            {!isBanned && (
+              <Link
+                href="/items/new"
+                className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-full bg-[#F59E0B] hover:bg-[#D97706] text-white text-sm font-bold shadow-sm transition"
+              >
+                <Plus className="w-4 h-4" /> 立即發布貼文
+              </Link>
+            )}
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
@@ -678,48 +896,80 @@ export default function HomePage() {
               const canDelete = isAdmin || (user && user.id === item.user_id);
               const hoursLeft = getRemainingHours(item);
               const isCompleted = item.status === 'completed';
+              const isFav = favoriteIds.includes(item.id);
+              const isWish = item.post_type === 'wish';
 
               return (
                 <div
                   key={item.id}
                   onClick={() => openItemModal(item)}
-                  className={`cursor-pointer bg-white rounded-3xl border border-[#F3E8D2] overflow-hidden shadow-sm hover:shadow-md hover:-translate-y-0.5 transition flex flex-col ${
-                    isCompleted ? 'opacity-75' : ''
-                  }`}
+                  className={`cursor-pointer bg-white rounded-3xl border overflow-hidden shadow-sm hover:shadow-md hover:-translate-y-0.5 transition flex flex-col ${
+                    isWish ? 'border-pink-200' : 'border-[#F3E8D2]'
+                  } ${isCompleted ? 'opacity-75' : ''}`}
                 >
-                  <div className="relative aspect-square bg-[#FDF8EC] flex items-center justify-center overflow-hidden">
+                  <div
+                    className={`relative aspect-square flex items-center justify-center overflow-hidden ${
+                      isWish ? 'bg-pink-50/60' : 'bg-[#FDF8EC]'
+                    }`}
+                  >
                     {coverImg ? (
                       <img src={coverImg} alt={item.title} className="w-full h-full object-cover" />
                     ) : (
-                      <div className="flex flex-col items-center text-[#C4B5A0]">
-                        <ImageIcon className="w-10 h-10 mb-1" />
-                        <span className="text-xs">無圖片</span>
+                      <div className="flex flex-col items-center text-[#C4B5A0] px-4 text-center">
+                        {isWish ? (
+                          <>
+                            <HeartHandshake className="w-10 h-10 mb-1 text-pink-400" />
+                            <span className="text-xs text-pink-600 font-bold">島民許願徵求中</span>
+                          </>
+                        ) : (
+                          <>
+                            <ImageIcon className="w-10 h-10 mb-1" />
+                            <span className="text-xs">無圖片</span>
+                          </>
+                        )}
                       </div>
                     )}
 
-                    {/* 已換出半透明印章 */}
                     {isCompleted && (
                       <div className="absolute inset-0 bg-black/45 flex items-center justify-center">
                         <span className="px-4 py-1.5 rounded-full bg-emerald-600 text-white font-bold text-sm border-2 border-white shadow-lg -rotate-6">
-                          ✅ 已換出
+                          ✅ {isWish ? '已徵得' : '已換出'}
                         </span>
                       </div>
                     )}
 
-                    {item.rarity && (
-                      <div className="absolute top-3 left-3">
-                        <RarityBadge rarity={item.rarity as RarityType} />
-                      </div>
-                    )}
+                    {/* 左上稀有度 + 許願標籤 */}
+                    <div className="absolute top-3 left-3 flex items-center gap-1">
+                      {item.rarity && <RarityBadge rarity={item.rarity as RarityType} />}
+                      {isWish && (
+                        <span className="px-2 py-0.5 rounded-lg bg-pink-500 text-white text-[10px] font-bold shadow-2xs">
+                          🙏 徵求
+                        </span>
+                      )}
+                    </div>
 
+                    {/* 右上 48h 倒數、愛心收藏 & 刪除按鈕 */}
                     <div className="absolute top-3 right-3 flex items-center gap-1.5">
                       <span className="px-2 py-1 rounded-full bg-black/55 text-white text-[10px] font-medium flex items-center gap-1">
                         <Clock className="w-3 h-3" /> 剩 {hoursLeft}h
                       </span>
+
+                      <button
+                        onClick={(e) => handleToggleFavorite(e, item.id)}
+                        title={isFav ? '取消收藏' : '加入收藏'}
+                        className={`p-1.5 rounded-full shadow-sm transition ${
+                          isFav
+                            ? 'bg-pink-500 text-white'
+                            : 'bg-white/90 text-[#8C7B6B] hover:text-pink-500'
+                        }`}
+                      >
+                        <Heart className={`w-3.5 h-3.5 ${isFav ? 'fill-current' : ''}`} />
+                      </button>
+
                       {canDelete && (
                         <button
                           onClick={(e) => handleDeleteItem(e, item.id)}
-                          title="刪除道具"
+                          title="刪除貼文"
                           className="p-1.5 rounded-full bg-red-500 hover:bg-red-600 text-white shadow-sm transition"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
@@ -731,9 +981,19 @@ export default function HomePage() {
                   <div className="p-4 flex-1 flex flex-col justify-between">
                     <div>
                       <h3 className="font-bold text-base mb-1.5 line-clamp-1">{item.title}</h3>
-                      <div className="bg-[#FFFDF7] border border-[#F3E8D2] rounded-2xl p-2.5 mb-3">
-                        <span className="text-[11px] font-semibold text-[#D97706] block mb-0.5">
-                          想換物品：
+                      <div
+                        className={`border rounded-2xl p-2.5 mb-3 ${
+                          isWish
+                            ? 'bg-pink-50/40 border-pink-100'
+                            : 'bg-[#FFFDF7] border-[#F3E8D2]'
+                        }`}
+                      >
+                        <span
+                          className={`text-[11px] font-semibold block mb-0.5 ${
+                            isWish ? 'text-pink-600' : 'text-[#D97706]'
+                          }`}
+                        >
+                          {isWish ? '可提供交換籌碼：' : '想換物品：'}
                         </span>
                         <p className="text-xs text-[#4A4238] line-clamp-2">
                           {item.wanted_items || '歡迎留言報價'}
@@ -749,7 +1009,7 @@ export default function HomePage() {
                         </span>
                       </div>
                       <span className="inline-flex items-center gap-1 text-[#D97706] font-medium shrink-0">
-                        <MessageCircle className="w-3.5 h-3.5" /> 詢問 / 看圖
+                        <MessageCircle className="w-3.5 h-3.5" /> 詳情 / 私訊
                       </span>
                     </div>
                   </div>
@@ -760,7 +1020,20 @@ export default function HomePage() {
         )}
       </main>
 
-      {/* 我的市集（個人中心彈窗） */}
+      {/* 頁尾免責與交易安全警語 */}
+      <footer className="border-t border-[#F3E8D2] bg-white/70 py-6 px-4 mt-10">
+        <div className="max-w-6xl mx-auto text-center space-y-2">
+          <div className="inline-flex items-center gap-1.5 text-xs font-bold text-amber-800 bg-[#FEF3C7] px-3.5 py-1.5 rounded-full">
+            <AlertTriangle className="w-4 h-4 text-[#D97706]" />
+            交易安全與平台免責聲明
+          </div>
+          <p className="text-xs text-[#8C7B6B] max-w-3xl mx-auto leading-relaxed">
+            本網站（寵物島市集）僅提供遊戲玩家道具交換資訊刊登與溝通便利之媒合平台，不介入雙方實際遊戲內道具轉移，亦不提供任何交易擔保、保管或賠償責任。交換前請務必核對對方遊戲 ID 與累計好評紀錄，嚴禁進行私下金錢買賣或帳號交易；若發生任何交易糾紛，請自行承擔風險並透過遊戲官方客服處理。
+          </p>
+        </div>
+      </footer>
+
+      {/* 我的市集（個人中心 + 愛心收藏彈窗） */}
       {user && showMyMarketModal && (
         <div
           onClick={() => setShowMyMarketModal(false)}
@@ -773,7 +1046,7 @@ export default function HomePage() {
             <div className="px-6 py-4 bg-[#FFFDF7] border-b border-[#F3E8D2] flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Store className="w-5 h-5 text-[#F59E0B]" />
-                <h2 className="font-bold text-lg">我的市集個人中心</h2>
+                <h2 className="font-bold text-lg">我的市集與追蹤收藏</h2>
               </div>
               <button
                 onClick={() => setShowMyMarketModal(false)}
@@ -813,14 +1086,34 @@ export default function HomePage() {
                 </form>
               </div>
 
-              {/* 我發布的道具管理 */}
-              <div>
-                <h3 className="font-bold text-sm mb-2.5">
-                  我上架的道具（共 {myItems.length} 件）
-                </h3>
-                {myItems.length === 0 ? (
+              {/* 切換：我發布的貼文 vs 我的愛心收藏 */}
+              <div className="grid grid-cols-2 gap-2 p-1 rounded-2xl bg-[#FFFDF7] border border-[#E6D8C3]">
+                <button
+                  onClick={() => setMyMarketTab('my_items')}
+                  className={`py-2 rounded-xl text-xs font-bold transition ${
+                    myMarketTab === 'my_items'
+                      ? 'bg-[#F59E0B] text-white'
+                      : 'text-[#6E6254]'
+                  }`}
+                >
+                  📦 我上架的貼文 ({myItems.length})
+                </button>
+                <button
+                  onClick={() => setMyMarketTab('favorites')}
+                  className={`py-2 rounded-xl text-xs font-bold transition ${
+                    myMarketTab === 'favorites'
+                      ? 'bg-pink-500 text-white'
+                      : 'text-[#6E6254]'
+                  }`}
+                >
+                  ❤️ 我的愛心收藏 ({myFavoriteItems.length})
+                </button>
+              </div>
+
+              {myMarketTab === 'my_items' ? (
+                myItems.length === 0 ? (
                   <p className="text-xs text-[#A39585] text-center py-6 bg-[#FFFDF7] rounded-2xl border border-[#F3E8D2]">
-                    你目前還沒有上架中的道具喔！
+                    你目前還沒有上架中的貼文喔！
                   </p>
                 ) : (
                   <div className="space-y-2.5">
@@ -838,12 +1131,16 @@ export default function HomePage() {
                                   : 'bg-amber-100 text-amber-800'
                               }`}
                             >
-                              {item.status === 'completed' ? '已換出' : '交換中'}
+                              {item.status === 'completed'
+                                ? item.post_type === 'wish'
+                                  ? '已徵得'
+                                  : '已換出'
+                                : '進行中'}
                             </span>
                             <span className="font-bold text-sm truncate">{item.title}</span>
                           </div>
                           <p className="text-[11px] text-[#8C7B6B] truncate mt-0.5">
-                            許願：{item.wanted_items}
+                            條件：{item.wanted_items}
                           </p>
                         </div>
 
@@ -852,7 +1149,11 @@ export default function HomePage() {
                             onClick={() => handleToggleItemStatus(item)}
                             className="px-2.5 py-1.5 rounded-xl bg-white border border-[#E6D8C3] hover:border-[#F59E0B] text-xs font-bold text-[#4A4238]"
                           >
-                            {item.status === 'completed' ? '重新上架' : '標記已換出'}
+                            {item.status === 'completed'
+                              ? '重新上架'
+                              : item.post_type === 'wish'
+                              ? '標記已徵得'
+                              : '標記已換出'}
                           </button>
                           <button
                             onClick={(e) => handleDeleteItem(e, item.id)}
@@ -864,14 +1165,50 @@ export default function HomePage() {
                       </div>
                     ))}
                   </div>
-                )}
-              </div>
+                )
+              ) : myFavoriteItems.length === 0 ? (
+                <p className="text-xs text-[#A39585] text-center py-6 bg-[#FFFDF7] rounded-2xl border border-[#F3E8D2]">
+                  還沒有收藏任何道具，點擊卡片右上角的愛心就能追蹤囉！
+                </p>
+              ) : (
+                <div className="space-y-2.5">
+                  {myFavoriteItems.map((item) => (
+                    <div
+                      key={item.id}
+                      onClick={() => {
+                        setShowMyMarketModal(false);
+                        openItemModal(item);
+                      }}
+                      className="cursor-pointer p-3 rounded-2xl bg-[#FFFDF7] hover:bg-[#FEF3C7]/40 border border-[#F3E8D2] flex items-center justify-between gap-3"
+                    >
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-pink-100 text-pink-700 font-bold">
+                            {item.post_type === 'wish' ? '🙏 許願' : '🔄 交換'}
+                          </span>
+                          <span className="font-bold text-sm truncate">{item.title}</span>
+                        </div>
+                        <p className="text-[11px] text-[#8C7B6B] truncate mt-0.5">
+                          發布者：{getDisplayName(item.user_id)}｜條件：{item.wanted_items}
+                        </p>
+                      </div>
+                      <button
+                        onClick={(e) => handleToggleFavorite(e, item.id)}
+                        className="p-1.5 rounded-full bg-pink-500 text-white shrink-0"
+                        title="取消收藏"
+                      >
+                        <Heart className="w-3.5 h-3.5 fill-current" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>
       )}
 
-      {/* 管理者專屬：即時註冊島民名冊視窗 */}
+      {/* 管理者專屬：即時註冊島民名冊與一鍵停權視窗 */}
       {isAdmin && showUsersModal && (
         <div
           onClick={() => setShowUsersModal(false)}
@@ -900,10 +1237,14 @@ export default function HomePage() {
               {usersList.map((u, index) => (
                 <div
                   key={u.id}
-                  className="p-3.5 rounded-2xl bg-[#FFFDF7] border border-[#F3E8D2] flex items-center justify-between gap-3 text-xs"
+                  className={`p-3.5 rounded-2xl border flex items-center justify-between gap-3 text-xs ${
+                    u.is_banned
+                      ? 'bg-red-50/70 border-red-200'
+                      : 'bg-[#FFFDF7] border-[#F3E8D2]'
+                  }`}
                 >
                   <div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <span className="px-2 py-0.5 rounded-full bg-[#FEF3C7] text-[#B45309] font-bold">
                         #{usersList.length - index}
                       </span>
@@ -918,6 +1259,11 @@ export default function HomePage() {
                           管理者
                         </span>
                       )}
+                      {u.is_banned && (
+                        <span className="px-2 py-0.5 rounded-full bg-red-600 text-white text-[10px] font-bold">
+                          已停權
+                        </span>
+                      )}
                     </div>
                     <div className="text-[#8C7B6B] mt-1">
                       遊戲 ID：
@@ -926,15 +1272,31 @@ export default function HomePage() {
                       </span>
                     </div>
                   </div>
-                  <div className="text-right text-[11px] text-[#A39585] shrink-0">
-                    {u.created_at
-                      ? new Date(u.created_at).toLocaleString('zh-TW', {
-                          month: '2-digit',
-                          day: '2-digit',
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })
-                      : ''}
+
+                  <div className="flex flex-col items-end gap-1.5 shrink-0">
+                    <span className="text-[11px] text-[#A39585]">
+                      {u.created_at
+                        ? new Date(u.created_at).toLocaleString('zh-TW', {
+                            month: '2-digit',
+                            day: '2-digit',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })
+                        : ''}
+                    </span>
+                    {!u.is_admin && (
+                      <button
+                        onClick={() => handleToggleBanUser(u)}
+                        className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition ${
+                          u.is_banned
+                            ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                            : 'bg-red-100 hover:bg-red-200 text-red-700'
+                        }`}
+                      >
+                        <Ban className="w-3 h-3" />
+                        {u.is_banned ? '解除停權' : '停權帳號'}
+                      </button>
+                    )}
                   </div>
                 </div>
               ))}
@@ -965,11 +1327,13 @@ export default function HomePage() {
                   </span>
                 </div>
 
-                {/* 一鍵複製賣家遊戲 ID 列 */}
                 {usersMap[activeItem.user_id]?.game_id && (
                   <div className="flex items-center gap-1.5 mt-1 mb-1">
                     <span className="text-xs text-[#8C7B6B]">
-                      遊戲 ID：<strong className="font-mono text-[#4A4238]">{usersMap[activeItem.user_id].game_id}</strong>
+                      遊戲 ID：
+                      <strong className="font-mono text-[#4A4238]">
+                        {usersMap[activeItem.user_id].game_id}
+                      </strong>
                     </span>
                     <button
                       type="button"
@@ -995,7 +1359,22 @@ export default function HomePage() {
               </div>
 
               <div className="flex items-center gap-1.5 flex-wrap justify-end">
-                {/* 賣家自己可標記「已換出」 */}
+                <button
+                  onClick={(e) => handleToggleFavorite(e, activeItem.id)}
+                  className={`p-2 rounded-full border transition ${
+                    favoriteIds.includes(activeItem.id)
+                      ? 'bg-pink-500 border-pink-500 text-white'
+                      : 'bg-[#FFFDF7] border-[#E6D8C3] text-[#8C7B6B] hover:text-pink-500'
+                  }`}
+                  title={favoriteIds.includes(activeItem.id) ? '取消收藏' : '加入收藏'}
+                >
+                  <Heart
+                    className={`w-4 h-4 ${
+                      favoriteIds.includes(activeItem.id) ? 'fill-current' : ''
+                    }`}
+                  />
+                </button>
+
                 {user && user.id === activeItem.user_id && (
                   <button
                     onClick={() => handleToggleItemStatus(activeItem)}
@@ -1006,12 +1385,15 @@ export default function HomePage() {
                     }`}
                   >
                     <CheckCircle2 className="w-3.5 h-3.5" />
-                    {activeItem.status === 'completed' ? '重新上架' : '標記已換出'}
+                    {activeItem.status === 'completed'
+                      ? '重新上架'
+                      : activeItem.post_type === 'wish'
+                      ? '標記已徵得'
+                      : '標記已換出'}
                   </button>
                 )}
 
-                {/* 買家可點「1v1 私訊」並自動帶入此商品卡片 */}
-                {user && activeItem.user_id !== user.id && (
+                {user && activeItem.user_id !== user.id && !isBanned && (
                   <button
                     onClick={() => {
                       const targetId = activeItem.user_id;
@@ -1077,7 +1459,9 @@ export default function HomePage() {
 
             <div className="bg-[#FFFDF7] border border-[#F3E8D2] rounded-2xl p-3.5 mb-4 space-y-2 text-sm">
               <div>
-                <span className="font-bold text-[#D97706]">想交換物品：</span>
+                <span className="font-bold text-[#D97706]">
+                  {activeItem.post_type === 'wish' ? '可提供交換籌碼：' : '想交換物品：'}
+                </span>
                 <span>{activeItem.wanted_items}</span>
               </div>
               {activeItem.description && (
@@ -1091,19 +1475,17 @@ export default function HomePage() {
                   ⏳ 距離自動下架還有約 {getRemainingHours(activeItem)} 小時
                 </span>
 
-                {/* 異常檢舉按鈕 */}
                 {user && user.id !== activeItem.user_id && (
                   <button
                     type="button"
                     onClick={() => setShowReportBox(!showReportBox)}
                     className="inline-flex items-center gap-1 text-[11px] text-[#A39585] hover:text-red-500 transition"
                   >
-                    <Flag className="w-3 h-3" /> 檢舉此道具
+                    <Flag className="w-3 h-3" /> 檢舉此貼文
                   </button>
                 )}
               </div>
 
-              {/* 檢舉輸入框 */}
               {showReportBox && (
                 <form
                   onSubmit={handleReportItem}
@@ -1137,7 +1519,7 @@ export default function HomePage() {
               <div className="space-y-2.5 max-h-48 overflow-y-auto mb-4 pr-1">
                 {comments.length === 0 ? (
                   <p className="text-xs text-[#A39585] text-center py-4">
-                    還沒有人留言，也可以直接點右上角「1v1 私訊」找賣家洽談喔！
+                    還沒有人留言，也可以直接點右上角「1v1 私訊」找對方洽談喔！
                   </p>
                 ) : (
                   comments.map((c) => (
@@ -1165,15 +1547,21 @@ export default function HomePage() {
               <form onSubmit={handleSendComment} className="flex gap-2">
                 <input
                   type="text"
-                  placeholder={user ? '輸入想交換的道具或留言...' : '請先登入後再留言詢問'}
+                  placeholder={
+                    isBanned
+                      ? '您的帳號已被停權'
+                      : user
+                      ? '輸入想交換的道具或留言...'
+                      : '請先登入後再留言詢問'
+                  }
                   value={newComment}
                   onChange={(e) => setNewComment(e.target.value)}
-                  disabled={!user || sendingComment}
+                  disabled={!user || isBanned || sendingComment}
                   className="flex-1 px-4 py-2.5 rounded-full bg-[#FFFDF7] border border-[#E6D8C3] text-xs focus:outline-none focus:border-[#F59E0B]"
                 />
                 <button
                   type="submit"
-                  disabled={!user || sendingComment || !newComment.trim()}
+                  disabled={!user || isBanned || sendingComment || !newComment.trim()}
                   className="px-4 py-2.5 rounded-full bg-[#F59E0B] hover:bg-[#D97706] text-white text-xs font-bold flex items-center gap-1 disabled:opacity-50"
                 >
                   <Send className="w-3.5 h-3.5" /> 送出
@@ -1185,7 +1573,7 @@ export default function HomePage() {
       )}
 
       {/* 1 對 1 聊天室視窗 */}
-      {user && showChatModal && (
+      {user && showChatModal && !isBanned && (
         <DirectChatModal
           currentUserId={user.id}
           initialTargetUserId={chatTargetUserId}
