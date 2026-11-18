@@ -22,6 +22,7 @@ import {
   ShieldCheck,
   ZoomIn,
   MessageSquareHeart,
+  Users,
 } from 'lucide-react';
 
 const CATEGORIES = [
@@ -42,6 +43,7 @@ export default function HomePage() {
   const [needBindProfile, setNeedBindProfile] = useState(false);
 
   const [items, setItems] = useState<any[]>([]);
+  const [usersList, setUsersList] = useState<any[]>([]);
   const [usersMap, setUsersMap] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(true);
 
@@ -49,9 +51,10 @@ export default function HomePage() {
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [selectedRarity, setSelectedRarity] = useState('全部');
 
-  // 留言彈窗與圖片放大狀態
+  // 留言彈窗、圖片放大、註冊名單彈窗狀態
   const [activeItem, setActiveItem] = useState<any | null>(null);
   const [zoomedImage, setZoomedImage] = useState<string | null>(null);
+  const [showUsersModal, setShowUsersModal] = useState(false);
   const [comments, setComments] = useState<any[]>([]);
   const [newComment, setNewComment] = useState('');
   const [sendingComment, setSendingComment] = useState(false);
@@ -70,12 +73,14 @@ export default function HomePage() {
 
     const { data: usersData } = await supabase
       .from('users')
-      .select('id, nickname, game_id, game_name, is_admin');
+      .select('id, nickname, game_id, game_name, is_admin, created_at')
+      .order('created_at', { ascending: false });
 
     const map: Record<string, any> = {};
     let foundCurrentUserProfile = false;
 
     if (usersData) {
+      setUsersList(usersData);
       usersData.forEach((u: any) => {
         map[u.id] = u;
         if (currentUser && u.id === currentUser.id) {
@@ -132,7 +137,56 @@ export default function HomePage() {
 
   useEffect(() => {
     fetchData();
+
+    // 即時監聽新玩家註冊 (users 表變動時自動更新人數與名單)
+    const usersChannel = supabase
+      .channel('realtime-users-count')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'users' },
+        (payload) => {
+          const updatedUser = payload.new as any;
+          if (!updatedUser?.id) return;
+          setUsersMap((prev) => ({ ...prev, [updatedUser.id]: updatedUser }));
+          setUsersList((prev) => {
+            const exists = prev.some((u) => u.id === updatedUser.id);
+            if (exists) {
+              return prev.map((u) => (u.id === updatedUser.id ? updatedUser : u));
+            }
+            return [updatedUser, ...prev];
+          });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(usersChannel);
+    };
   }, []);
+
+  // 當管理者登入時，即時監聽新通知（包含新玩家註冊通知）
+  useEffect(() => {
+    if (!user) return;
+    const notifChannel = supabase
+      .channel(`realtime-notif-${user.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'notifications',
+          filter: `user_id=eq.${user.id}`,
+        },
+        (payload) => {
+          setNotifications((prev) => [payload.new as any, ...prev]);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(notifChannel);
+    };
+  }, [user]);
 
   const getDisplayName = (uid: string) => {
     const u = usersMap[uid];
@@ -300,7 +354,6 @@ export default function HomePage() {
           <div className="flex items-center gap-2">
             {user ? (
               <>
-                {/* 1v1 私訊聊天室按鈕 */}
                 <button
                   onClick={() => {
                     setChatTargetUserId(null);
@@ -318,11 +371,11 @@ export default function HomePage() {
                   )}
                 </button>
 
-                {/* 留言通知鈴鐺 */}
+                {/* 通知鈴鐺（包含留言通知與管理者註冊通知） */}
                 <div className="relative">
                   <button
                     onClick={markNotificationsRead}
-                    title="留言通知"
+                    title="通知中心"
                     className="relative p-2.5 rounded-full bg-white border border-[#E6D8C3] text-[#6E6254] hover:border-[#F59E0B] transition"
                   >
                     <Bell className="w-4 h-4" />
@@ -336,11 +389,11 @@ export default function HomePage() {
                   {showNotifMenu && (
                     <div className="absolute right-0 mt-2 w-80 bg-white rounded-2xl shadow-lg border border-[#F3E8D2] p-3 z-30">
                       <div className="text-xs font-bold text-[#8C7B6B] pb-2 mb-2 border-b border-[#F3E8D2]">
-                        最新留言通知
+                        最新通知中心
                       </div>
                       {notifications.length === 0 ? (
                         <p className="text-xs text-[#A39585] py-4 text-center">
-                          目前還沒有新的留言通知喔！
+                          目前還沒有新的通知喔！
                         </p>
                       ) : (
                         <div className="max-h-64 overflow-y-auto space-y-2">
@@ -348,14 +401,20 @@ export default function HomePage() {
                             <div
                               key={n.id}
                               onClick={() => {
-                                const target = items.find((i) => i.id === n.item_id);
-                                if (target) openItemModal(target);
+                                if (n.item_id) {
+                                  const target = items.find((i) => i.id === n.item_id);
+                                  if (target) openItemModal(target);
+                                } else if (isAdmin) {
+                                  setShowUsersModal(true);
+                                }
                                 setShowNotifMenu(false);
                               }}
                               className="p-2.5 rounded-xl bg-[#FFFDF7] hover:bg-[#FEF3C7]/50 cursor-pointer border border-[#F3E8D2] text-xs"
                             >
                               <p className="font-bold text-[#4A4238]">
-                                {n.sender_name} 在「{n.item_title}」留言：
+                                {n.item_id
+                                  ? `${n.sender_name} 在「${n.item_title}」留言：`
+                                  : n.item_title}
                               </p>
                               <p className="text-[#6E6254] line-clamp-2 mt-0.5">{n.message}</p>
                             </div>
@@ -428,9 +487,28 @@ export default function HomePage() {
               </button>
             ))}
           </div>
-          <span className="text-sm text-[#8C7B6B]">
-            共 {filteredItems.length} 件交換中道具（每筆上架保留 48 小時）
-          </span>
+
+          {/* 即時統計膠囊列（顯示已註冊人數 + 交換中道具數） */}
+          <div className="flex items-center gap-2.5 flex-wrap">
+            <button
+              type="button"
+              onClick={() => isAdmin && setShowUsersModal(true)}
+              title={isAdmin ? '點擊查看完整島民註冊名冊' : '寵物島市集總註冊人數'}
+              className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold border transition ${
+                isAdmin
+                  ? 'bg-[#FEF3C7] border-[#F59E0B] text-[#B45309] hover:bg-[#FDE68A] cursor-pointer'
+                  : 'bg-white border-[#E6D8C3] text-[#6E6254] cursor-default'
+              }`}
+            >
+              <Users className="w-3.5 h-3.5 text-[#F59E0B]" />
+              已註冊島民：{usersList.length} 人
+              {isAdmin && <span className="underline ml-1">查看名單</span>}
+            </button>
+
+            <span className="text-xs sm:text-sm text-[#8C7B6B]">
+              共 {filteredItems.length} 件交換中道具
+            </span>
+          </div>
         </div>
 
         {/* 商品卡片網格 */}
@@ -524,6 +602,72 @@ export default function HomePage() {
           </div>
         )}
       </main>
+
+      {/* 管理者專屬：即時註冊島民名冊視窗 */}
+      {isAdmin && showUsersModal && (
+        <div
+          onClick={() => setShowUsersModal(false)}
+          className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white rounded-3xl max-w-xl w-full max-h-[85vh] flex flex-col border border-[#F3E8D2] shadow-2xl overflow-hidden"
+          >
+            <div className="px-6 py-4 bg-[#FFFDF7] border-b border-[#F3E8D2] flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Users className="w-5 h-5 text-[#F59E0B]" />
+                <h2 className="font-bold text-lg">
+                  已註冊島民名冊（共 {usersList.length} 人）
+                </h2>
+              </div>
+              <button
+                onClick={() => setShowUsersModal(false)}
+                className="p-1.5 rounded-full bg-white border border-[#E6D8C3] text-[#8C7B6B] hover:text-[#4A4238]"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-4 overflow-y-auto space-y-2.5">
+              {usersList.map((u, index) => (
+                <div
+                  key={u.id}
+                  className="p-3.5 rounded-2xl bg-[#FFFDF7] border border-[#F3E8D2] flex items-center justify-between gap-3 text-xs"
+                >
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="px-2 py-0.5 rounded-full bg-[#FEF3C7] text-[#B45309] font-bold">
+                        #{usersList.length - index}
+                      </span>
+                      <span className="font-bold text-sm text-[#4A4238]">
+                        {u.game_name || u.nickname || '未設定名稱'}
+                      </span>
+                      {u.is_admin && (
+                        <span className="px-2 py-0.5 rounded-full bg-amber-600 text-white text-[10px] font-bold">
+                          管理者
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[#8C7B6B] mt-1">
+                      遊戲 ID：<span className="font-mono font-bold text-[#4A4238]">{u.game_id || '尚未綁定'}</span>
+                    </div>
+                  </div>
+                  <div className="text-right text-[11px] text-[#A39585] shrink-0">
+                    {u.created_at
+                      ? new Date(u.created_at).toLocaleString('zh-TW', {
+                          month: '2-digit',
+                          day: '2-digit',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })
+                      : ''}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 點擊卡片彈出的詳情與留言板視窗 */}
       {activeItem && (
