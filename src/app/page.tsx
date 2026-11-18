@@ -1089,7 +1089,7 @@ export default function HomePage() {
         )}
 
         {/* 篩選、排序與管理名單列 */}
-        <div className="flex flex-wrap items-center justify-between gap-2.5 mb-5">
+        <div className="flex flex-wrap items-center justify-between gap-2.5 mb-4">
           <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto no-scrollbar max-w-full pb-1 sm:pb-0">
             <span className="text-xs sm:text-sm text-[#8C7B6B] whitespace-nowrap shrink-0">稀有度：</span>
             {RARITIES.map((r) => (
@@ -1164,7 +1164,27 @@ export default function HomePage() {
           </div>
         </div>
 
-        {/* 商品卡片網格 */}
+        {/* VIP 尊榮曝光輕引導橫幅 */}
+        <div className="mb-4 px-3.5 py-2 rounded-2xl bg-gradient-to-r from-[#FEF3C7] via-[#FFFBEB] to-[#FEF3C7] border border-amber-300/70 flex items-center justify-between gap-2 text-xs">
+          <div className="flex items-center gap-1.5 min-w-0 text-amber-900">
+            <Crown className="w-4 h-4 text-amber-600 shrink-0" />
+            <span className="truncate font-medium">
+              <strong>👑 VIP 島主特權：</strong>享首頁最前排置頂曝光、每日可發 5 篇、上架保留 7 天免重發！
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setSupportModalTab('vip');
+              setShowSupportModal(true);
+            }}
+            className="px-2.5 py-1 rounded-full bg-amber-500 hover:bg-amber-600 text-white font-bold text-[11px] whitespace-nowrap shrink-0 transition"
+          >
+            了解特權
+          </button>
+        </div>
+
+        {/* 商品卡片網格（手機直式 2 欄、手機橫式 3 欄、電腦 4 欄，大小最人性化） */}
         {loading ? (
           <div className="text-center py-20 text-[#8C7B6B]">載入資料中...</div>
         ) : filteredItems.length === 0 ? (
@@ -1186,7 +1206,7 @@ export default function HomePage() {
             )}
           </div>
         ) : (
-          <div className="grid grid-cols-1 landscape:grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-5">
+          <div className="grid grid-cols-2 max-lg:landscape:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
             {filteredItems.map((item) => {
               const coverImg =
                 Array.isArray(item.images) && item.images.length > 0 ? item.images[0] : null;
@@ -1203,16 +1223,17 @@ export default function HomePage() {
                 <div
                   key={item.id}
                   onClick={() => openItemModal(item)}
-                  className={`group cursor-pointer bg-white rounded-3xl border overflow-hidden transition-all duration-200 flex flex-col ${
+                  className={`group cursor-pointer bg-white rounded-2xl sm:rounded-3xl border overflow-hidden transition-all duration-200 flex flex-col ${
                     sellerIsVip
-                      ? 'border-amber-400 ring-2 ring-amber-300/60 shadow-md shadow-amber-200/50 hover:shadow-lg hover:shadow-amber-200/80 hover:-translate-y-1'
+                      ? 'border-amber-400 ring-1 ring-amber-300/70 shadow-sm shadow-amber-200/50 hover:shadow-md hover:-translate-y-0.5'
                       : isWish
-                      ? 'border-pink-200 shadow-xs hover:shadow-md hover:-translate-y-0.5'
-                      : 'border-[#F3E8D2] shadow-xs hover:shadow-md hover:-translate-y-0.5'
+                      ? 'border-pink-200 shadow-2xs hover:shadow-sm hover:-translate-y-0.5'
+                      : 'border-[#F3E8D2] shadow-2xs hover:shadow-sm hover:-translate-y-0.5'
                   } ${isCompleted ? 'opacity-75' : ''}`}
                 >
+                  {/* 精簡 16:11 寬比例圖片框 */}
                   <div
-                    className={`relative aspect-[4/3] flex items-center justify-center overflow-hidden ${
+                    className={`relative aspect-[16/11] flex items-center justify-center overflow-hidden ${
                       isWish ? 'bg-pink-50/60' : 'bg-[#FDF8EC]'
                     }`}
                   >
@@ -1223,16 +1244,16 @@ export default function HomePage() {
                         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                       />
                     ) : (
-                      <div className="flex flex-col items-center text-[#C4B5A0] px-4 text-center">
+                      <div className="flex flex-col items-center text-[#C4B5A0] px-2 text-center">
                         {isWish ? (
                           <>
-                            <HeartHandshake className="w-9 h-9 mb-1 text-pink-400" />
-                            <span className="text-xs text-pink-600 font-bold">島民許願徵求中</span>
+                            <HeartHandshake className="w-7 h-7 mb-1 text-pink-400" />
+                            <span className="text-[11px] text-pink-600 font-bold">許願徵求中</span>
                           </>
                         ) : (
                           <>
-                            <ImageIcon className="w-9 h-9 mb-1" />
-                            <span className="text-xs">無圖片</span>
+                            <ImageIcon className="w-7 h-7 mb-1" />
+                            <span className="text-[11px]">無圖片</span>
                           </>
                         )}
                       </div>
@@ -1240,103 +1261,100 @@ export default function HomePage() {
 
                     {isCompleted && (
                       <div className="absolute inset-0 bg-black/45 flex items-center justify-center">
-                        <span className="px-4 py-1.5 rounded-full bg-emerald-600 text-white font-bold text-sm border-2 border-white shadow-lg -rotate-6">
+                        <span className="px-3 py-1 rounded-full bg-emerald-600 text-white font-bold text-xs border border-white shadow-md -rotate-6">
                           ✅ {isWish ? '已徵得' : '已換出'}
                         </span>
                       </div>
                     )}
 
-                    <div className="absolute top-2.5 left-2.5 flex items-center gap-1 flex-wrap">
+                    {/* 左上角：稀有度 + VIP 置頂標籤 */}
+                    <div className="absolute top-2 left-2 flex items-center gap-1 flex-wrap">
                       {item.rarity && <RarityBadge rarity={item.rarity as RarityType} />}
                       {sellerIsVip && (
-                        <span className="px-2 py-0.5 rounded-lg bg-gradient-to-r from-amber-500 to-orange-500 text-white text-[10px] font-bold shadow-xs whitespace-nowrap">
-                          ✨ VIP 置頂
+                        <span className="px-1.5 py-0.5 rounded-md bg-gradient-to-r from-amber-500 to-orange-500 text-white text-[9px] sm:text-[10px] font-bold shadow-2xs whitespace-nowrap">
+                          ✨ 置頂
                         </span>
                       )}
                       {isWish && (
-                        <span className="px-2 py-0.5 rounded-lg bg-pink-500 text-white text-[10px] font-bold shadow-2xs whitespace-nowrap">
-                          🙏 徵求
+                        <span className="px-1.5 py-0.5 rounded-md bg-pink-500 text-white text-[9px] sm:text-[10px] font-bold whitespace-nowrap">
+                          🙏 徵
                         </span>
                       )}
                     </div>
 
-                    <div className="absolute top-2.5 right-2.5 flex items-center gap-1.5">
-                      <span className="px-2 py-1 rounded-full bg-black/50 backdrop-blur-xs text-white text-[10px] font-medium flex items-center gap-1 whitespace-nowrap">
-                        <Clock className="w-3 h-3" /> {hoursLeft}h
+                    {/* 右上角：精簡倒數 + 愛心 + 刪除 */}
+                    <div className="absolute top-2 right-2 flex items-center gap-1">
+                      <span className="hidden sm:inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-black/50 backdrop-blur-xs text-white text-[10px] whitespace-nowrap">
+                        <Clock className="w-2.5 h-2.5" /> {hoursLeft}h
                       </span>
 
                       <button
                         onClick={(e) => handleToggleFavorite(e, item.id)}
                         title={isFav ? '取消收藏' : '加入收藏'}
-                        className={`p-1.5 rounded-full backdrop-blur-xs shadow-xs transition ${
+                        className={`p-1.5 rounded-full backdrop-blur-xs shadow-2xs transition ${
                           isFav
                             ? 'bg-pink-500 text-white'
                             : 'bg-white/85 text-[#8C7B6B] hover:text-pink-500'
                         }`}
                       >
-                        <Heart className={`w-3.5 h-3.5 ${isFav ? 'fill-current' : ''}`} />
+                        <Heart className={`w-3 h-3 sm:w-3.5 sm:h-3.5 ${isFav ? 'fill-current' : ''}`} />
                       </button>
 
                       {canDelete && (
                         <button
                           onClick={(e) => handleDeleteItem(e, item.id)}
                           title="刪除貼文"
-                          className="p-1.5 rounded-full bg-red-500/90 hover:bg-red-600 text-white shadow-xs transition"
+                          className="p-1.5 rounded-full bg-red-500/90 hover:bg-red-600 text-white shadow-2xs transition"
                         >
-                          <Trash2 className="w-3.5 h-3.5" />
+                          <Trash2 className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
                         </button>
                       )}
                     </div>
                   </div>
 
-                  <div className="p-4 flex-1 flex flex-col justify-between">
+                  {/* 卡片內容區 */}
+                  <div className="p-3 sm:p-3.5 flex-1 flex flex-col justify-between">
                     <div>
-                      <h3 className="font-bold text-base mb-2 line-clamp-1 text-[#4A4238]">
+                      <h3 className="font-bold text-sm sm:text-base mb-1.5 line-clamp-1 text-[#4A4238]">
                         {item.title}
                       </h3>
                       <div
-                        className={`border rounded-2xl p-2.5 mb-3 ${
+                        className={`border rounded-xl p-2 mb-2.5 ${
                           isWish
                             ? 'bg-pink-50/40 border-pink-100'
                             : 'bg-[#FFFDF7] border-[#F3E8D2]'
                         }`}
                       >
                         <span
-                          className={`text-[11px] font-bold block mb-0.5 ${
+                          className={`text-[10px] sm:text-[11px] font-bold block mb-0.5 ${
                             isWish ? 'text-pink-600' : 'text-[#D97706]'
                           }`}
                         >
-                          {isWish ? '可提供交換籌碼：' : '想換物品：'}
+                          {isWish ? '提供籌碼：' : '想換物品：'}
                         </span>
-                        <p className="text-xs text-[#4A4238] line-clamp-2 leading-relaxed">
+                        <p className="text-xs text-[#4A4238] line-clamp-2 leading-snug">
                           {item.wanted_items || '歡迎留言報價'}
                         </p>
                       </div>
                     </div>
 
-                    <div className="pt-2.5 border-t border-[#F7EFE0] space-y-2">
-                      <div className="flex items-center justify-between gap-1.5 text-xs">
-                        <div className="flex items-center gap-1.5 min-w-0">
-                          {sellerIsVip && (
-                            <span className="px-1.5 py-0.5 rounded-md bg-gradient-to-r from-amber-500 to-yellow-500 text-white text-[10px] font-bold whitespace-nowrap shrink-0">
-                              👑 VIP
-                            </span>
-                          )}
-                          <span className="font-bold text-[#4A4238] truncate">{sellerName}</span>
-                        </div>
-                        <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-bold whitespace-nowrap shrink-0">
-                          👍 {sellerInfo?.good_reviews || 0}
+                    {/* 底部賣家列 */}
+                    <div className="pt-2 border-t border-[#F7EFE0] flex items-center justify-between gap-1 text-[11px]">
+                      <div className="flex items-center gap-1 min-w-0">
+                        {sellerIsVip && (
+                          <span className="px-1 py-0.2 rounded bg-amber-500 text-white text-[9px] font-bold shrink-0">
+                            👑VIP
+                          </span>
+                        )}
+                        <span className="font-bold text-[#4A4238] truncate">{sellerName}</span>
+                        <span className="text-[10px] text-emerald-700 font-bold shrink-0">
+                          👍{sellerInfo?.good_reviews || 0}
                         </span>
                       </div>
 
-                      <div className="flex items-center justify-between text-[11px] text-[#8C7B6B]">
-                        <span className="font-mono truncate">
-                          ID: {sellerInfo?.game_id || '---'}
-                        </span>
-                        <span className="inline-flex items-center gap-1 text-[#D97706] font-bold whitespace-nowrap shrink-0 group-hover:translate-x-0.5 transition-transform">
-                          <MessageCircle className="w-3.5 h-3.5" /> 詳情 / 私訊
-                        </span>
-                      </div>
+                      <span className="inline-flex items-center gap-0.5 text-[#D97706] font-bold whitespace-nowrap shrink-0">
+                        <MessageCircle className="w-3 h-3" /> 詳情
+                      </span>
                     </div>
                   </div>
                 </div>
