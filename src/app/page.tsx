@@ -8,6 +8,7 @@ import { GameProfileModal } from '@/components/GameProfileModal';
 import { DirectChatModal } from '@/components/DirectChatModal';
 import { AdminDashboardModal } from '@/components/AdminDashboardModal';
 import { checkSensitiveContent } from '@/lib/contentFilter';
+import { removeUnusedStorageImages } from '@/lib/storageCleanup';
 import {
   Search,
   Plus,
@@ -284,7 +285,6 @@ export default function HomePage() {
   const trendingKeywords = useMemo(() => {
     const freq: Record<string, number> = {};
 
-    // 1. 統計許願池標題與許願清單出現的關鍵詞
     items.forEach((item) => {
       if (item.post_type === 'wish' && item.title) {
         const cleanTitle = item.title.replace(/急徵|徵求|徵|！|!/g, '').trim();
@@ -294,7 +294,6 @@ export default function HomePage() {
       }
     });
 
-    // 2. 統計最近 48 小時搜尋紀錄
     recentSearches.forEach((kw) => {
       const cleanKw = kw.trim();
       if (cleanKw.length >= 2 && cleanKw.length <= 12) {
@@ -455,9 +454,15 @@ export default function HomePage() {
     }
   };
 
+  // 刪除貼文並智慧清理未入庫的 Storage 實體圖片
   const handleDeleteItem = async (e: React.MouseEvent, itemId: string) => {
     e.stopPropagation();
     if (!confirm('確定要刪除這筆貼文嗎？刪除後無法復原喔！')) return;
+
+    const targetItem = items.find((i) => i.id === itemId);
+    if (targetItem) {
+      await removeUnusedStorageImages(supabase, targetItem.images, false);
+    }
 
     const { error } = await supabase.from('items').delete().eq('id', itemId);
     if (error) {
@@ -775,7 +780,6 @@ export default function HomePage() {
           <div className="flex items-center gap-2">
             {user ? (
               <>
-                {/* 管理者專屬：站長數據戰情室按鈕 */}
                 {isAdmin && (
                   <button
                     onClick={() => setShowAdminDashboard(true)}

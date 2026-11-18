@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import { removeUnusedStorageImages } from '@/lib/storageCleanup';
 import {
   X,
   BarChart3,
@@ -13,6 +14,7 @@ import {
   Trash2,
   Ban,
   Check,
+  BookOpenCheck,
 } from 'lucide-react';
 
 interface AdminDashboardModalProps {
@@ -30,24 +32,32 @@ export function AdminDashboardModal({
 }: AdminDashboardModalProps) {
   const supabase = createClient();
   const [reports, setReports] = useState<any[]>([]);
-  const [loadingReports, setLoadingReports] = useState(true);
+  const [catalogItems, setCatalogItems] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const fetchReports = async () => {
-    setLoadingReports(true);
-    const { data } = await supabase
+  const fetchAdminData = async () => {
+    setLoading(true);
+    const { data: reportData } = await supabase
       .from('item_reports')
       .select('*')
       .eq('status', 'pending')
       .order('created_at', { ascending: false });
-    if (data) setReports(data);
-    setLoadingReports(false);
+    if (reportData) setReports(reportData);
+
+    const { data: catData } = await supabase
+      .from('item_catalog')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(60);
+    if (catData) setCatalogItems(catData);
+
+    setLoading(false);
   };
 
   useEffect(() => {
-    fetchReports();
+    fetchAdminData();
   }, []);
 
-  // 計算今日與昨日時間區間
   const now = new Date();
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   const startOfYesterday = startOfToday - 24 * 60 * 60 * 1000;
@@ -74,22 +84,44 @@ export function AdminDashboardModal({
   const completionRate =
     items.length > 0 ? Math.round((completedCount / items.length) * 100) : 0;
 
-  // 忽略 / 結案檢舉
+  // 核准圖鑑入庫
+  const handleApproveCatalog = async (catId: string) => {
+    const { error } = await supabase
+      .from('item_catalog')
+      .update({ status: 'approved' })
+      .eq('id', catId);
+    if (!error) {
+      setCatalogItems((prev) =>
+        prev.map((c) => (c.id === catId ? { ...c, status: 'approved' } : c))
+      );
+    }
+  };
+
+  // 拒絕 / 移除圖鑑並實體刪除 Storage 檔案
+  const handleDeleteCatalog = async (catItem: any) => {
+    if (!confirm(`確定要從圖鑑庫移除「${catItem.item_name}」並刪除實體圖片檔嗎？`)) return;
+    await removeUnusedStorageImages(supabase, [catItem.image_url], true);
+    await supabase.from('item_catalog').delete().eq('id', catItem.id);
+    setCatalogItems((prev) => prev.filter((c) => c.id !== catItem.id));
+  };
+
   const handleDismissReport = async (reportId: string) => {
     await supabase.from('item_reports').update({ status: 'resolved' }).eq('id', reportId);
     setReports((prev) => prev.filter((r) => r.id !== reportId));
   };
 
-  // 一鍵刪除被檢舉貼文
   const handleDeleteReportedItem = async (report: any) => {
-    if (!confirm(`確定要刪除被檢舉貼文「${report.item_title}」嗎？`)) return;
+    if (!confirm(`確定要刪除被檢舉貼文「${report.item_title}」並清理未入庫圖片嗎？`)) return;
+    const targetItem = items.find((i) => i.id === report.item_id);
+    if (targetItem) {
+      await removeUnusedStorageImages(supabase, targetItem.images, false);
+    }
     await supabase.from('items').delete().eq('id', report.item_id);
     await supabase.from('item_reports').update({ status: 'resolved' }).eq('id', report.id);
     setReports((prev) => prev.filter((r) => r.id !== report.id));
     onRefreshData();
   };
 
-  // 一鍵刪除貼文 + 永久停權該帳號與遊戲 ID
   const handleDeleteAndBan = async (report: any) => {
     if (
       !confirm(
@@ -99,6 +131,10 @@ export function AdminDashboardModal({
       return;
     }
 
+    const targetItem = items.find((i) => i.id === report.item_id);
+    if (targetItem) {
+      await removeUnusedStorageImages(supabase, targetItem.images, true);
+    }
     await supabase.from('items').delete().eq('id', report.item_id);
 
     if (report.reported_user_id) {
@@ -121,6 +157,9 @@ export function AdminDashboardModal({
     onRefreshData();
   };
 
+  const pendingCatalog = catalogItems.filter((c) => c.status === 'pending');
+  const approvedCatalog = catalogItems.filter((c) => c.status === 'approved');
+
   return (
     <div
       onClick={onClose}
@@ -130,11 +169,10 @@ export function AdminDashboardModal({
         onClick={(e) => e.stopPropagation()}
         className="bg-white rounded-3xl max-w-3xl w-full max-h-[88vh] flex flex-col border border-[#F3E8D2] shadow-2xl overflow-hidden text-[#4A4238]"
       >
-        {/* 頂部標題 */}
         <div className="px-6 py-4 bg-[#FFFDF7] border-b border-[#F3E8D2] flex items-center justify-between">
           <div className="flex items-center gap-2">
             <BarChart3 className="w-5 h-5 text-[#F59E0B]" />
-            <h2 className="font-bold text-lg">📊 站長數據戰情室 & 檢舉審核中心</h2>
+            <h2 className="font-bold text-lg">📊 站長數據戰情室 & 審核中心</h2>
           </div>
           <button
             onClick={onClose}
@@ -162,9 +200,7 @@ export function AdminDashboardModal({
                 <Repeat className="w-3.5 h-3.5 text-amber-600" /> 今日交換貼文
               </div>
               <div className="text-2xl font-bold text-[#4A4238]">{todayOffersCount} 篇</div>
-              <div className="text-[11px] text-[#8C7B6B] mt-1">
-                目前線上活躍交換中
-              </div>
+              <div className="text-[11px] text-[#8C7B6B] mt-1">目前線上活躍交換中</div>
             </div>
 
             <div className="p-4 rounded-2xl bg-[#FFFDF7] border border-[#F3E8D2]">
@@ -172,9 +208,7 @@ export function AdminDashboardModal({
                 <HeartHandshake className="w-3.5 h-3.5 text-pink-500" /> 今日許願徵求
               </div>
               <div className="text-2xl font-bold text-[#4A4238]">{todayWishesCount} 篇</div>
-              <div className="text-[11px] text-[#8C7B6B] mt-1">
-                島民許願池活躍度
-              </div>
+              <div className="text-[11px] text-[#8C7B6B] mt-1">島民許願池活躍度</div>
             </div>
 
             <div className="p-4 rounded-2xl bg-[#FFFDF7] border border-[#F3E8D2]">
@@ -188,16 +222,80 @@ export function AdminDashboardModal({
             </div>
           </div>
 
+          {/* 🖼️ 共用圖鑑審核與 Storage 清理中心 */}
+          <div>
+            <h3 className="font-bold text-sm mb-3 flex items-center gap-1.5">
+              <BookOpenCheck className="w-4 h-4 text-[#F59E0B]" /> 共用圖鑑審核中心（待審核：
+              {pendingCatalog.length} 張 ／ 已收錄：{approvedCatalog.length} 張）
+            </h3>
+
+            {loading ? (
+              <p className="text-xs text-[#8C7B6B] py-4 text-center">載入圖鑑資料中...</p>
+            ) : catalogItems.length === 0 ? (
+              <div className="p-5 rounded-2xl bg-[#FFFDF7] border border-[#F3E8D2] text-center text-xs text-[#8C7B6B]">
+                目前還沒有玩家上傳新的圖鑑圖片喔！
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                {catalogItems.map((c) => (
+                  <div
+                    key={c.id}
+                    className={`p-2.5 rounded-2xl border flex flex-col justify-between text-xs ${
+                      c.status === 'pending'
+                        ? 'bg-amber-50/70 border-amber-300'
+                        : 'bg-[#FFFDF7] border-[#F3E8D2]'
+                    }`}
+                  >
+                    <div>
+                      <div className="relative aspect-square rounded-xl overflow-hidden bg-white mb-2 border border-[#F3E8D2]">
+                        <img
+                          src={c.image_url}
+                          alt={c.item_name}
+                          className="w-full h-full object-cover"
+                        />
+                        <span
+                          className={`absolute top-1.5 left-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                            c.status === 'pending'
+                              ? 'bg-amber-500 text-white'
+                              : 'bg-emerald-600 text-white'
+                          }`}
+                        >
+                          {c.status === 'pending' ? '待審核' : '已入庫'}
+                        </span>
+                      </div>
+                      <p className="font-bold truncate mb-2">{c.item_name}</p>
+                    </div>
+
+                    <div className="flex gap-1">
+                      {c.status === 'pending' && (
+                        <button
+                          onClick={() => handleApproveCatalog(c.id)}
+                          className="flex-1 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px]"
+                        >
+                          核准
+                        </button>
+                      )}
+                      <button
+                        onClick={() => handleDeleteCatalog(c)}
+                        className="flex-1 py-1.5 rounded-lg bg-red-100 hover:bg-red-200 text-red-700 font-bold text-[11px]"
+                      >
+                        移除並刪圖
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
           {/* 待處理檢舉集中審核清單 */}
           <div>
             <h3 className="font-bold text-sm mb-3 flex items-center gap-1.5">
               <Flag className="w-4 h-4 text-red-500" /> 待處理檢舉案件（{reports.length} 件）
             </h3>
 
-            {loadingReports ? (
-              <p className="text-xs text-[#8C7B6B] py-6 text-center">載入檢舉紀錄中...</p>
-            ) : reports.length === 0 ? (
-              <div className="p-6 rounded-2xl bg-[#FFFDF7] border border-[#F3E8D2] text-center text-xs text-[#8C7B6B]">
+            {reports.length === 0 ? (
+              <div className="p-5 rounded-2xl bg-[#FFFDF7] border border-[#F3E8D2] text-center text-xs text-[#8C7B6B]">
                 ✨ 太棒了！目前沒有任何待處理的檢舉案件。
               </div>
             ) : (

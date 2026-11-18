@@ -4,7 +4,17 @@ import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { RarityBadge, RarityType } from '@/components/RarityBadge';
-import { ArrowLeft, Upload, X, Sparkles, Image as ImageIcon, Repeat, HeartHandshake } from 'lucide-react';
+import {
+  ArrowLeft,
+  Upload,
+  X,
+  Sparkles,
+  Image as ImageIcon,
+  Repeat,
+  HeartHandshake,
+  BookOpenCheck,
+  ClipboardPaste,
+} from 'lucide-react';
 import Link from 'next/link';
 
 const CATEGORIES = [
@@ -21,40 +31,93 @@ export default function NewItemPage() {
   const supabase = createClient();
 
   const [userId, setUserId] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [postType, setPostType] = useState<'offer' | 'wish'>('offer');
   const [title, setTitle] = useState('');
   const [category, setCategory] = useState('fashion');
   const [rarity, setRarity] = useState<RarityType>('SR');
   const [wantedItems, setWantedItems] = useState('');
   const [description, setDescription] = useState('');
+
+  // 本機新上傳的檔案與預覽
   const [files, setFiles] = useState<File[]>([]);
   const [previews, setPreviews] = useState<string[]>([]);
+
+  // 從「共用圖鑑庫」直接選用的圖片網址（免重新上傳）
+  const [selectedCatalogUrls, setSelectedCatalogUrls] = useState<string[]>([]);
+  const [catalogList, setCatalogList] = useState<any[]>([]);
+
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
   useEffect(() => {
-    const checkUser = async () => {
+    const initPage = async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) {
         router.push('/login');
-      } else {
-        setUserId(user.id);
+        return;
       }
+      setUserId(user.id);
+
+      const { data: profile } = await supabase
+        .from('users')
+        .select('is_admin')
+        .eq('id', user.id)
+        .single();
+      if (profile?.is_admin) setIsAdmin(true);
+
+      // 載入已核准的共用圖鑑庫
+      const { data: catalogData } = await supabase
+        .from('item_catalog')
+        .select('*')
+        .eq('status', 'approved')
+        .order('created_at', { ascending: false })
+        .limit(100);
+      if (catalogData) setCatalogList(catalogData);
     };
-    checkUser();
+    initPage();
   }, [router, supabase]);
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!e.target.files) return;
-    const selected = Array.from(e.target.files);
-    if (files.length + selected.length > 3) {
-      setErrorMsg('最多可上傳 3 張圖片喔！');
+  // 支援全頁 Ctrl + V 直接貼上剪貼簿圖片
+  useEffect(() => {
+    const handlePaste = (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+
+      const pastedImages: File[] = [];
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].type.startsWith('image/')) {
+          const blob = items[i].getAsFile();
+          if (blob) pastedImages.push(blob);
+        }
+      }
+
+      if (pastedImages.length > 0) {
+        e.preventDefault();
+        addFilesWithLimit(pastedImages);
+      }
+    };
+
+    window.addEventListener('paste', handlePaste);
+    return () => window.removeEventListener('paste', handlePaste);
+  }, [files, selectedCatalogUrls]);
+
+  const totalImageCount = files.length + selectedCatalogUrls.length;
+
+  const addFilesWithLimit = (incoming: File[]) => {
+    if (totalImageCount + incoming.length > 3) {
+      setErrorMsg('最多可選擇 3 張圖片喔（含圖鑑圖片與上傳截圖）！');
       return;
     }
     setErrorMsg('');
-    const newFiles = [...files, ...selected];
-    setFiles(newFiles);
-    setPreviews(newFiles.map((file) => URL.createObjectURL(file)));
+    const updated = [...files, ...incoming];
+    setFiles(updated);
+    setPreviews(updated.map((f) => URL.createObjectURL(f)));
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files) return;
+    addFilesWithLimit(Array.from(e.target.files));
   };
 
   const removeFile = (index: number) => {
@@ -62,6 +125,32 @@ export default function NewItemPage() {
     setFiles(updatedFiles);
     setPreviews(updatedFiles.map((file) => URL.createObjectURL(file)));
   };
+
+  const handleSelectCatalogItem = (catItem: any) => {
+    if (selectedCatalogUrls.includes(catItem.image_url)) return;
+    if (totalImageCount >= 3) {
+      setErrorMsg('最多可選擇 3 張圖片喔！');
+      return;
+    }
+    setErrorMsg('');
+    setSelectedCatalogUrls((prev) => [...prev, catItem.image_url]);
+    if (!title.trim()) {
+      setTitle(catItem.item_name);
+      if (catItem.category) setCategory(catItem.category);
+      if (catItem.rarity) setRarity(catItem.rarity as RarityType);
+    }
+  };
+
+  const removeCatalogUrl = (url: string) => {
+    setSelectedCatalogUrls((prev) => prev.filter((u) => u !== url));
+  };
+
+  // 根據輸入的道具名稱過濾推薦的共用圖鑑
+  const matchingCatalog = catalogList.filter((c) => {
+    const kw = title.trim().toLowerCase();
+    if (!kw) return true;
+    return c.item_name.toLowerCase().includes(kw);
+  }).slice(0, 8);
 
   const compressImage = (file: File): Promise<Blob> => {
     return new Promise((resolve) => {
@@ -100,7 +189,7 @@ export default function NewItemPage() {
     setErrorMsg('');
 
     try {
-      const uploadedUrls: string[] = [];
+      const finalUrls: string[] = [...selectedCatalogUrls];
 
       for (const file of files) {
         const compressedBlob = await compressImage(file);
@@ -116,7 +205,18 @@ export default function NewItemPage() {
           .from('item-images')
           .getPublicUrl(fileName);
 
-        uploadedUrls.push(publicUrlData.publicUrl);
+        const publicUrl = publicUrlData.publicUrl;
+        finalUrls.push(publicUrl);
+
+        // 將新上傳的圖片送入「審核制共用圖鑑庫」（管理者直接核准，一般玩家為待審核）
+        await supabase.from('item_catalog').insert({
+          item_name: title.trim(),
+          category,
+          rarity,
+          image_url: publicUrl,
+          status: isAdmin ? 'approved' : 'pending',
+          submitted_by: userId,
+        });
       }
 
       const response = await fetch('/api/items', {
@@ -129,7 +229,7 @@ export default function NewItemPage() {
           rarity,
           wanted_items: wantedItems.trim(),
           description: description.trim(),
-          images: uploadedUrls,
+          images: finalUrls,
         }),
       });
 
@@ -163,7 +263,6 @@ export default function NewItemPage() {
             <h1 className="text-2xl font-bold">發布寵物島貼文</h1>
           </div>
 
-          {/* 切換貼文類型：交換市集 vs 島民許願池 */}
           <div className="grid grid-cols-2 gap-3 mb-6 p-1.5 rounded-2xl bg-[#FFFDF7] border border-[#E6D8C3]">
             <button
               type="button"
@@ -213,6 +312,42 @@ export default function NewItemPage() {
                 className="w-full px-4 py-3 rounded-2xl bg-[#FFFDF7] border border-[#E6D8C3] focus:outline-none focus:border-[#F59E0B]"
                 required
               />
+
+              {/* 共用圖鑑庫推薦列 */}
+              {matchingCatalog.length > 0 && (
+                <div className="mt-3 p-3 rounded-2xl bg-[#FFFDF7] border border-[#F3E8D2]">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-[#B45309] mb-2">
+                    <BookOpenCheck className="w-4 h-4 text-[#F59E0B]" />
+                    <span>共用圖鑑庫現成圖片（點擊直接套用，免截圖）：</span>
+                  </div>
+                  <div className="flex gap-2 overflow-x-auto pb-1">
+                    {matchingCatalog.map((c) => {
+                      const isPicked = selectedCatalogUrls.includes(c.image_url);
+                      return (
+                        <button
+                          key={c.id}
+                          type="button"
+                          onClick={() => handleSelectCatalogItem(c)}
+                          className={`shrink-0 w-20 p-1.5 rounded-xl border text-center transition ${
+                            isPicked
+                              ? 'border-[#F59E0B] bg-[#FEF3C7]'
+                              : 'border-[#E6D8C3] bg-white hover:border-[#F59E0B]'
+                          }`}
+                        >
+                          <img
+                            src={c.image_url}
+                            alt={c.item_name}
+                            className="w-full h-14 object-cover rounded-lg mb-1"
+                          />
+                          <span className="text-[10px] font-medium block truncate">
+                            {c.item_name}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -285,17 +420,41 @@ export default function NewItemPage() {
             </div>
 
             <div>
-              <label className="block text-sm font-semibold mb-2 flex items-center gap-1.5">
-                <ImageIcon className="w-4 h-4 text-[#F59E0B]" />
-                {postType === 'offer'
-                  ? '道具截圖（最多 3 張，自動壓縮為 WebP）'
-                  : '參考圖 / 籌碼截圖（選填，最多 3 張）'}
-              </label>
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                <label className="text-sm font-semibold flex items-center gap-1.5">
+                  <ImageIcon className="w-4 h-4 text-[#F59E0B]" />
+                  道具圖片（最多 3 張，自動轉 WebP）
+                </label>
+                <span className="inline-flex items-center gap-1 text-[11px] px-2.5 py-0.5 rounded-full bg-[#FEF3C7] text-[#B45309] font-bold">
+                  <ClipboardPaste className="w-3 h-3" /> 支援直接按 Ctrl+V 貼上截圖！
+                </span>
+              </div>
 
               <div className="flex flex-wrap gap-3">
+                {/* 已選用的共用圖鑑縮圖 */}
+                {selectedCatalogUrls.map((url, idx) => (
+                  <div
+                    key={`cat-${idx}`}
+                    className="relative w-24 h-24 rounded-2xl overflow-hidden border-2 border-[#F59E0B]"
+                  >
+                    <img src={url} alt="catalog" className="w-full h-full object-cover" />
+                    <span className="absolute bottom-0 inset-x-0 bg-[#F59E0B]/90 text-white text-[9px] text-center font-bold py-0.5">
+                      圖鑑圖片
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => removeCatalogUrl(url)}
+                      className="absolute top-1 right-1 bg-black/60 text-white rounded-full p-1 hover:bg-black"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))}
+
+                {/* 新上傳的本機截圖預覽 */}
                 {previews.map((src, idx) => (
                   <div
-                    key={idx}
+                    key={`file-${idx}`}
                     className="relative w-24 h-24 rounded-2xl overflow-hidden border border-[#E6D8C3]"
                   >
                     <img src={src} alt="preview" className="w-full h-full object-cover" />
@@ -309,10 +468,10 @@ export default function NewItemPage() {
                   </div>
                 ))}
 
-                {files.length < 3 && (
+                {totalImageCount < 3 && (
                   <label className="w-24 h-24 rounded-2xl border-2 border-dashed border-[#D8C7AE] hover:border-[#F59E0B] bg-[#FFFDF7] flex flex-col items-center justify-center cursor-pointer text-[#8C7B6B] hover:text-[#F59E0B] transition">
                     <Upload className="w-5 h-5 mb-1" />
-                    <span className="text-xs">新增圖片</span>
+                    <span className="text-xs">選擇 / 貼上</span>
                     <input
                       type="file"
                       accept="image/*"
