@@ -2,18 +2,31 @@
 
 import React, { useEffect, useState, useRef } from 'react';
 import { createClient } from '@/lib/supabase/client';
-import { X, Search, Send, MessageSquareHeart, UserCheck } from 'lucide-react';
+import {
+  X,
+  Search,
+  Send,
+  MessageSquareHeart,
+  UserCheck,
+  ThumbsUp,
+  Check,
+  Package,
+} from 'lucide-react';
 
 interface DirectChatModalProps {
   currentUserId: string;
   initialTargetUserId?: string | null;
+  initialContextItem?: { id: string; title: string; wanted_items?: string; image?: string } | null;
   onClose: () => void;
+  onReviewSuccess?: () => void;
 }
 
 export function DirectChatModal({
   currentUserId,
   initialTargetUserId,
+  initialContextItem,
   onClose,
+  onReviewSuccess,
 }: DirectChatModalProps) {
   const supabase = createClient();
   const [searchGameId, setSearchGameId] = useState('');
@@ -22,12 +35,17 @@ export function DirectChatModal({
 
   const [contacts, setContacts] = useState<any[]>([]);
   const [selectedPartner, setSelectedPartner] = useState<any | null>(null);
+  const [contextItem, setContextItem] = useState(initialContextItem || null);
   const [messages, setMessages] = useState<any[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [sending, setSending] = useState(false);
+
+  // 好評狀態
+  const [hasReviewed, setHasReviewed] = useState(false);
+  const [reviewing, setReviewing] = useState(false);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // 載入所有歷史聯絡人與預設開啟的對象
   useEffect(() => {
     const loadConversations = async () => {
       const { data: allMsgs } = await supabase
@@ -50,7 +68,7 @@ export function DirectChatModal({
       if (partnerIds.size > 0) {
         const { data: usersData } = await supabase
           .from('users')
-          .select('id, game_id, game_name, nickname')
+          .select('id, game_id, game_name, nickname, good_reviews')
           .in('id', Array.from(partnerIds));
 
         if (usersData) {
@@ -68,11 +86,19 @@ export function DirectChatModal({
     loadConversations();
   }, [currentUserId, initialTargetUserId]);
 
-  // 載入與目前選定對象的對話紀錄 + 訂閱即時訊息
   useEffect(() => {
     if (!selectedPartner) return;
 
-    const fetchMessages = async () => {
+    const fetchMessagesAndReviewStatus = async () => {
+      // 檢查是否已經給過此對象好評
+      const { data: reviewRecord } = await supabase
+        .from('user_reviews')
+        .select('id')
+        .eq('reviewer_id', currentUserId)
+        .eq('target_user_id', selectedPartner.id)
+        .maybeSingle();
+      setHasReviewed(!!reviewRecord);
+
       const { data } = await supabase
         .from('direct_messages')
         .select('*')
@@ -83,7 +109,6 @@ export function DirectChatModal({
 
       if (data) {
         setMessages(data);
-        // 將對方傳來的未讀訊息標記為已讀
         const unreadIds = data
           .filter((m) => m.receiver_id === currentUserId && !m.is_read)
           .map((m) => m.id);
@@ -96,9 +121,8 @@ export function DirectChatModal({
       }
     };
 
-    fetchMessages();
+    fetchMessagesAndReviewStatus();
 
-    // 訂閱 Supabase Realtime 即時接收新訊息
     const channel = supabase
       .channel(`dm-${currentUserId}-${selectedPartner.id}`)
       .on(
@@ -133,7 +157,6 @@ export function DirectChatModal({
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // 透過輸入「對方遊戲 ID」搜尋玩家並開啟 1v1 聊天
   const handleSearchByGameId = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanId = searchGameId.trim();
@@ -144,12 +167,12 @@ export function DirectChatModal({
 
     const { data: foundUser } = await supabase
       .from('users')
-      .select('id, game_id, game_name, nickname')
+      .select('id, game_id, game_name, nickname, good_reviews')
       .eq('game_id', cleanId)
       .maybeSingle();
 
     if (!foundUser) {
-      setSearchError(`找不到遊戲 ID 為「${cleanId}」的玩家，請確認對方是否已註冊並綁定 ID。`);
+      setSearchError(`找不到遊戲 ID 為「${cleanId}」的玩家。`);
       setSearching(false);
       return;
     }
@@ -165,18 +188,46 @@ export function DirectChatModal({
       return [foundUser, ...prev];
     });
     setSelectedPartner(foundUser);
+    setContextItem(null);
     setSearchGameId('');
     setSearching(false);
   };
 
-  // 發送 1v1 私訊
-  const handleSend = async (e: React.FormEvent) => {
+  // 給予對方交換好評 (+1)
+  const handleGiveReview = async () => {
+    if (!selectedPartner || hasReviewed || reviewing) return;
+    if (!confirm(`確定要給「${selectedPartner.game_name || selectedPartner.nickname}」一個交換好評嗎？（每人限給一次）`)) {
+      return;
+    }
+
+    setReviewing(true);
+    const { error } = await supabase.from('user_reviews').insert({
+      reviewer_id: currentUserId,
+      target_user_id: selectedPartner.id,
+    });
+
+    if (!error) {
+      setHasReviewed(true);
+      const updatedCount = (selectedPartner.good_reviews || 0) + 1;
+      setSelectedPartner({ ...selectedPartner, good_reviews: updatedCount });
+      setContacts((prev) =>
+        prev.map((c) => (c.id === selectedPartner.id ? { ...c, good_reviews: updatedCount } : c))
+      );
+      if (onReviewSuccess) onReviewSuccess();
+    } else {
+      alert('無法重複給予好評喔！');
+    }
+    setReviewing(false);
+  };
+
+  const handleSend = async (e: React.FormEvent, overrideText?: string) => {
     e.preventDefault();
-    if (!selectedPartner || !newMessage.trim()) return;
+    const textToSend = overrideText !== undefined ? overrideText : newMessage;
+    if (!selectedPartner || !textToSend.trim()) return;
 
     setSending(true);
-    const content = newMessage.trim();
-    setNewMessage('');
+    const content = textToSend.trim();
+    if (overrideText === undefined) setNewMessage('');
 
     const { data: inserted, error } = await supabase
       .from('direct_messages')
@@ -204,9 +255,8 @@ export function DirectChatModal({
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="bg-white rounded-3xl max-w-3xl w-full h-[82vh] border border-[#F3E8D2] shadow-2xl flex flex-col overflow-hidden text-[#4A4238]"
+        className="bg-white rounded-3xl max-w-3xl w-full h-[85vh] border border-[#F3E8D2] shadow-2xl flex flex-col overflow-hidden text-[#4A4238]"
       >
-        {/* 頂部標題列 */}
         <div className="px-6 py-4 bg-[#FFFDF7] border-b border-[#F3E8D2] flex items-center justify-between">
           <div className="flex items-center gap-2">
             <MessageSquareHeart className="w-5 h-5 text-[#F59E0B]" />
@@ -220,9 +270,8 @@ export function DirectChatModal({
           </button>
         </div>
 
-        {/* 主體左右分欄 */}
         <div className="flex-1 flex flex-col sm:flex-row overflow-hidden">
-          {/* 左側：輸入遊戲 ID 搜尋 + 聯絡人列表 */}
+          {/* 左側聯絡人與搜尋 */}
           <div className="w-full sm:w-72 border-b sm:border-b-0 sm:border-r border-[#F3E8D2] bg-[#FFFDF7]/60 flex flex-col">
             <form onSubmit={handleSearchByGameId} className="p-3.5 border-b border-[#F3E8D2]">
               <label className="block text-xs font-bold text-[#8C7B6B] mb-1.5">
@@ -249,7 +298,6 @@ export function DirectChatModal({
               )}
             </form>
 
-            {/* 聊天對象清單 */}
             <div className="flex-1 overflow-y-auto p-2 space-y-1 max-h-36 sm:max-h-none">
               {contacts.length === 0 ? (
                 <p className="text-xs text-[#A39585] text-center py-6 px-3">
@@ -261,7 +309,10 @@ export function DirectChatModal({
                   return (
                     <button
                       key={c.id}
-                      onClick={() => setSelectedPartner(c)}
+                      onClick={() => {
+                        setSelectedPartner(c);
+                        if (c.id !== initialTargetUserId) setContextItem(null);
+                      }}
                       className={`w-full text-left px-3.5 py-2.5 rounded-2xl transition flex items-center justify-between ${
                         isSelected
                           ? 'bg-[#FEF3C7] border border-[#F59E0B]'
@@ -269,8 +320,11 @@ export function DirectChatModal({
                       }`}
                     >
                       <div>
-                        <div className="font-bold text-sm text-[#4A4238]">
-                          {c.game_name || c.nickname || '島民玩家'}
+                        <div className="font-bold text-sm text-[#4A4238] flex items-center gap-1.5">
+                          <span>{c.game_name || c.nickname || '島民玩家'}</span>
+                          <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            👍 {c.good_reviews || 0}
+                          </span>
                         </div>
                         <div className="text-[11px] text-[#8C7B6B]">
                           ID: {c.game_id || '未設定'}
@@ -284,20 +338,88 @@ export function DirectChatModal({
             </div>
           </div>
 
-          {/* 右側：1v1 對話泡泡區 */}
+          {/* 右側對話區 */}
           <div className="flex-1 flex flex-col bg-white overflow-hidden">
             {selectedPartner ? (
               <>
-                <div className="px-5 py-3 border-b border-[#F3E8D2] bg-[#FFFDF7]/40 flex items-center justify-between">
+                <div className="px-4 py-3 border-b border-[#F3E8D2] bg-[#FFFDF7]/40 flex flex-wrap items-center justify-between gap-2">
                   <div>
                     <span className="font-bold text-sm">
                       {selectedPartner.game_name || selectedPartner.nickname}
                     </span>
                     <span className="ml-2 text-xs px-2 py-0.5 rounded-full bg-[#FEF3C7] text-[#B45309] font-medium">
-                      遊戲 ID：{selectedPartner.game_id || '無'}
+                      ID：{selectedPartner.game_id || '無'}
+                    </span>
+                    <span className="ml-1.5 text-xs px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold">
+                      👍 {selectedPartner.good_reviews || 0} 好評
                     </span>
                   </div>
+
+                  {/* 給予交換好評按鈕 */}
+                  <button
+                    type="button"
+                    onClick={handleGiveReview}
+                    disabled={hasReviewed || reviewing}
+                    className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-bold transition ${
+                      hasReviewed
+                        ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 cursor-default'
+                        : 'bg-emerald-500 hover:bg-emerald-600 text-white shadow-2xs'
+                    }`}
+                  >
+                    {hasReviewed ? (
+                      <>
+                        <Check className="w-3.5 h-3.5" /> 已給予好評
+                      </>
+                    ) : (
+                      <>
+                        <ThumbsUp className="w-3.5 h-3.5" /> 交換完成給好評
+                      </>
+                    )}
+                  </button>
                 </div>
+
+                {/* 從商品詳情點進來時顯示的「正在詢問商品小卡片」 */}
+                {contextItem && selectedPartner.id === initialTargetUserId && (
+                  <div className="mx-4 mt-3 p-3 rounded-2xl bg-[#FFFDF7] border border-[#F59E0B]/40 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      {contextItem.image ? (
+                        <img
+                          src={contextItem.image}
+                          alt={contextItem.title}
+                          className="w-11 h-11 rounded-xl object-cover border border-[#F3E8D2] shrink-0"
+                        />
+                      ) : (
+                        <div className="w-11 h-11 rounded-xl bg-[#FEF3C7] flex items-center justify-center text-[#D97706] shrink-0">
+                          <Package className="w-5 h-5" />
+                        </div>
+                      )}
+                      <div className="min-w-0">
+                        <span className="text-[10px] font-bold text-[#D97706] block">
+                          正在詢問此交換道具：
+                        </span>
+                        <p className="text-xs font-bold truncate">{contextItem.title}</p>
+                        {contextItem.wanted_items && (
+                          <p className="text-[11px] text-[#8C7B6B] truncate">
+                            許願：{contextItem.wanted_items}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        handleSend(
+                          e,
+                          `你好！我想詢問交換你的【${contextItem.title}】，方便聊聊嗎？`
+                        );
+                        setContextItem(null);
+                      }}
+                      className="px-3 py-1.5 rounded-full bg-[#F59E0B] hover:bg-[#D97706] text-white text-[11px] font-bold shrink-0"
+                    >
+                      一鍵發送詢問
+                    </button>
+                  </div>
+                )}
 
                 <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-[#FFFDF7]/30">
                   {messages.length === 0 ? (
@@ -335,7 +457,7 @@ export function DirectChatModal({
                 </div>
 
                 <form
-                  onSubmit={handleSend}
+                  onSubmit={(e) => handleSend(e)}
                   className="p-3.5 border-t border-[#F3E8D2] bg-white flex gap-2"
                 >
                   <input

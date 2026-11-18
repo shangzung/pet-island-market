@@ -23,6 +23,12 @@ import {
   ZoomIn,
   MessageSquareHeart,
   Users,
+  Copy,
+  Check,
+  CheckCircle2,
+  Flag,
+  ThumbsUp,
+  Store,
 } from 'lucide-react';
 
 const CATEGORIES = [
@@ -39,7 +45,11 @@ export default function HomePage() {
   const supabase = createClient();
   const [user, setUser] = useState<any>(null);
   const [isAdmin, setIsAdmin] = useState(false);
-  const [myProfile, setMyProfile] = useState<{ game_id?: string; game_name?: string } | null>(null);
+  const [myProfile, setMyProfile] = useState<{
+    game_id?: string;
+    game_name?: string;
+    good_reviews?: number;
+  } | null>(null);
   const [needBindProfile, setNeedBindProfile] = useState(false);
 
   const [items, setItems] = useState<any[]>([]);
@@ -50,20 +60,35 @@ export default function HomePage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [selectedRarity, setSelectedRarity] = useState('全部');
+  const [showCompleted, setShowCompleted] = useState(false);
 
-  // 留言彈窗、圖片放大、註冊名單彈窗狀態
+  // 彈窗狀態
   const [activeItem, setActiveItem] = useState<any | null>(null);
   const [zoomedImage, setZoomedImage] = useState<string | null>(null);
   const [showUsersModal, setShowUsersModal] = useState(false);
+  const [showMyMarketModal, setShowMyMarketModal] = useState(false);
+
+  // 我的市集修改名稱狀態
+  const [editGameName, setEditGameName] = useState('');
+  const [savingName, setSavingName] = useState(false);
+
+  // 複製 ID 與檢舉狀態
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [showReportBox, setShowReportBox] = useState(false);
+  const [reportReason, setReportReason] = useState('');
+  const [submittingReport, setSubmittingReport] = useState(false);
+
+  // 留言狀態
   const [comments, setComments] = useState<any[]>([]);
   const [newComment, setNewComment] = useState('');
   const [sendingComment, setSendingComment] = useState(false);
 
-  // 通知鈴鐺 & 1v1 聊天室狀態
+  // 通知 & 1v1 聊天室狀態
   const [notifications, setNotifications] = useState<any[]>([]);
   const [showNotifMenu, setShowNotifMenu] = useState(false);
   const [showChatModal, setShowChatModal] = useState(false);
   const [chatTargetUserId, setChatTargetUserId] = useState<string | null>(null);
+  const [chatContextItem, setChatContextItem] = useState<any | null>(null);
   const [unreadDmCount, setUnreadDmCount] = useState(0);
 
   const fetchData = async () => {
@@ -73,7 +98,7 @@ export default function HomePage() {
 
     const { data: usersData } = await supabase
       .from('users')
-      .select('id, nickname, game_id, game_name, is_admin, created_at')
+      .select('id, nickname, game_id, game_name, is_admin, good_reviews, created_at')
       .order('created_at', { ascending: false });
 
     const map: Record<string, any> = {};
@@ -86,7 +111,12 @@ export default function HomePage() {
         if (currentUser && u.id === currentUser.id) {
           foundCurrentUserProfile = true;
           setIsAdmin(u.is_admin === true);
-          setMyProfile({ game_id: u.game_id, game_name: u.game_name });
+          setMyProfile({
+            game_id: u.game_id,
+            game_name: u.game_name,
+            good_reviews: u.good_reviews || 0,
+          });
+          setEditGameName(u.game_name || '');
           if (!u.game_id || !u.game_name) {
             setNeedBindProfile(true);
           }
@@ -110,7 +140,7 @@ export default function HomePage() {
         const expireTime = item.expires_at
           ? new Date(item.expires_at).getTime()
           : new Date(item.created_at).getTime() + 48 * 60 * 60 * 1000;
-        return expireTime > now && (!item.status || item.status === 'active');
+        return expireTime > now;
       });
       setItems(validItems);
     }
@@ -138,7 +168,6 @@ export default function HomePage() {
   useEffect(() => {
     fetchData();
 
-    // 即時監聽新玩家註冊 (users 表變動時自動更新人數與名單)
     const usersChannel = supabase
       .channel('realtime-users-count')
       .on(
@@ -164,7 +193,6 @@ export default function HomePage() {
     };
   }, []);
 
-  // 當管理者登入時，即時監聽新通知（包含新玩家註冊通知）
   useEffect(() => {
     if (!user) return;
     const notifChannel = supabase
@@ -201,6 +229,35 @@ export default function HomePage() {
     return Math.max(0, Math.ceil((expireTime - Date.now()) / (1000 * 60 * 60)));
   };
 
+  // 一鍵複製遊戲 ID
+  const handleCopyGameId = (e: React.MouseEvent, gameId: string) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(gameId);
+    setCopiedId(gameId);
+    setTimeout(() => setCopiedId(null), 2000);
+  };
+
+  // 標記商品為「已換出」或重新開放「交換中」
+  const handleToggleItemStatus = async (item: any) => {
+    const nextStatus = item.status === 'completed' ? 'active' : 'completed';
+    const { error } = await supabase
+      .from('items')
+      .update({ status: nextStatus })
+      .eq('id', item.id);
+
+    if (!error) {
+      setItems((prev) =>
+        prev.map((i) => (i.id === item.id ? { ...i, status: nextStatus } : i))
+      );
+      if (activeItem?.id === item.id) {
+        setActiveItem({ ...activeItem, status: nextStatus });
+      }
+    } else {
+      alert('更新狀態失敗：' + error.message);
+    }
+  };
+
+  // 刪除商品
   const handleDeleteItem = async (e: React.MouseEvent, itemId: string) => {
     e.stopPropagation();
     if (!confirm('確定要刪除這筆道具嗎？刪除後無法復原喔！')) return;
@@ -214,8 +271,60 @@ export default function HomePage() {
     }
   };
 
+  // 檢舉商品通知管理員
+  const handleReportItem = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !activeItem || !reportReason.trim()) return;
+
+    setSubmittingReport(true);
+    const reporterName = myProfile?.game_name || getDisplayName(user.id);
+
+    const { error } = await supabase.rpc('report_item_to_admins', {
+      p_item_id: activeItem.id,
+      p_item_title: activeItem.title,
+      p_reporter_name: reporterName,
+      p_reason: reportReason.trim(),
+    });
+
+    if (!error) {
+      alert('檢舉已送出！管理員會收到通知並盡快審核處理。');
+      setShowReportBox(false);
+      setReportReason('');
+    } else {
+      alert('檢舉送出失敗：' + error.message);
+    }
+    setSubmittingReport(false);
+  };
+
+  // 我的市集：更新遊戲名稱
+  const handleUpdateMyName = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !editGameName.trim()) return;
+
+    setSavingName(true);
+    const cleanName = editGameName.trim();
+    const { error } = await supabase
+      .from('users')
+      .update({ game_name: cleanName, nickname: cleanName })
+      .eq('id', user.id);
+
+    if (!error) {
+      setMyProfile((prev) => (prev ? { ...prev, game_name: cleanName } : null));
+      setUsersMap((prev) => ({
+        ...prev,
+        [user.id]: { ...prev[user.id], game_name: cleanName, nickname: cleanName },
+      }));
+      alert('遊戲名稱更新成功！');
+    } else {
+      alert('更新失敗：' + error.message);
+    }
+    setSavingName(false);
+  };
+
   const openItemModal = async (item: any) => {
     setActiveItem(item);
+    setShowReportBox(false);
+    setReportReason('');
     setComments([]);
     const { data } = await supabase
       .from('comments')
@@ -287,6 +396,9 @@ export default function HomePage() {
   };
 
   const filteredItems = items.filter((item) => {
+    const isItemCompleted = item.status === 'completed';
+    if (!showCompleted && isItemCompleted) return false;
+
     const matchCategory = selectedCategory === 'all' || item.category === selectedCategory;
     const matchRarity = selectedRarity === '全部' || item.rarity === selectedRarity;
     const keyword = searchQuery.trim().toLowerCase();
@@ -298,6 +410,8 @@ export default function HomePage() {
     return matchCategory && matchRarity && matchSearch;
   });
 
+  const myItems = user ? items.filter((i) => i.user_id === user.id) : [];
+
   return (
     <div className="min-h-screen bg-[#FFFDF7] text-[#4A4238]">
       {/* 首次登入未綁定遊戲 ID / 遊戲名稱時強制彈出設定視窗 */}
@@ -305,7 +419,7 @@ export default function HomePage() {
         <GameProfileModal
           userId={user.id}
           onSuccess={(gId, gName) => {
-            setMyProfile({ game_id: gId, game_name: gName });
+            setMyProfile({ game_id: gId, game_name: gName, good_reviews: 0 });
             setNeedBindProfile(false);
             fetchData();
           }}
@@ -315,28 +429,37 @@ export default function HomePage() {
       {/* 頂部導覽列 */}
       <header className="sticky top-0 z-20 bg-[#FFFDF7]/90 backdrop-blur-md border-b border-[#F3E8D2]">
         <div className="max-w-6xl mx-auto px-4 py-3.5 flex flex-wrap items-center justify-between gap-3">
-          <Link href="/" className="flex items-center gap-2.5">
-            <div className="w-10 h-10 rounded-2xl bg-[#F59E0B] flex items-center justify-center text-white text-xl shadow-sm">
-              🐾
-            </div>
-            <div>
-              <span className="text-xl font-bold tracking-tight block leading-none">
-                寵物島市集
-              </span>
-              <div className="flex items-center gap-2 mt-0.5">
+          <div className="flex items-center gap-2.5">
+            <Link href="/" className="flex items-center gap-2.5">
+              <div className="w-10 h-10 rounded-2xl bg-[#F59E0B] flex items-center justify-center text-white text-xl shadow-sm">
+                🐾
+              </div>
+              <div>
+                <span className="text-xl font-bold tracking-tight block leading-none">
+                  寵物島市集
+                </span>
                 {isAdmin && (
-                  <span className="inline-flex items-center gap-0.5 text-[11px] text-amber-700 font-bold">
-                    <ShieldCheck className="w-3 h-3" /> 管理者
-                  </span>
-                )}
-                {myProfile?.game_name && (
-                  <span className="text-[11px] text-[#8C7B6B]">
-                    {myProfile.game_name} (ID: {myProfile.game_id})
+                  <span className="inline-flex items-center gap-0.5 text-[11px] text-amber-700 font-bold mt-0.5">
+                    <ShieldCheck className="w-3 h-3" /> 管理者模式
                   </span>
                 )}
               </div>
-            </div>
-          </Link>
+            </Link>
+
+            {/* 我的市集個人名片膠囊（點擊可管理自己的道具與名稱） */}
+            {user && myProfile?.game_name && (
+              <button
+                onClick={() => setShowMyMarketModal(true)}
+                title="點擊打開「我的市集」個人中心"
+                className="hidden md:inline-flex items-center gap-1.5 ml-2 px-3 py-1.5 rounded-full bg-white border border-[#E6D8C3] hover:border-[#F59E0B] text-xs transition"
+              >
+                <Store className="w-3.5 h-3.5 text-[#F59E0B]" />
+                <span className="font-bold">{myProfile.game_name}</span>
+                <span className="text-[#8C7B6B]">(ID:{myProfile.game_id})</span>
+                <span className="text-emerald-700 font-bold">👍{myProfile.good_reviews || 0}</span>
+              </button>
+            )}
+          </div>
 
           {/* 搜尋框 */}
           <div className="relative flex-1 max-w-md min-w-[200px]">
@@ -355,8 +478,17 @@ export default function HomePage() {
             {user ? (
               <>
                 <button
+                  onClick={() => setShowMyMarketModal(true)}
+                  title="我的市集"
+                  className="md:hidden p-2.5 rounded-full bg-white border border-[#E6D8C3] text-[#6E6254]"
+                >
+                  <Store className="w-4 h-4 text-[#F59E0B]" />
+                </button>
+
+                <button
                   onClick={() => {
                     setChatTargetUserId(null);
+                    setChatContextItem(null);
                     setShowChatModal(true);
                     setUnreadDmCount(0);
                   }}
@@ -371,7 +503,7 @@ export default function HomePage() {
                   )}
                 </button>
 
-                {/* 通知鈴鐺（包含留言通知與管理者註冊通知） */}
+                {/* 通知鈴鐺 */}
                 <div className="relative">
                   <button
                     onClick={markNotificationsRead}
@@ -412,7 +544,7 @@ export default function HomePage() {
                               className="p-2.5 rounded-xl bg-[#FFFDF7] hover:bg-[#FEF3C7]/50 cursor-pointer border border-[#F3E8D2] text-xs"
                             >
                               <p className="font-bold text-[#4A4238]">
-                                {n.item_id
+                                {n.item_id && !n.item_title.startsWith('🚩')
                                   ? `${n.sender_name} 在「${n.item_title}」留言：`
                                   : n.item_title}
                               </p>
@@ -486,9 +618,19 @@ export default function HomePage() {
                 {r}
               </button>
             ))}
+
+            {/* 顯示已換出開關 */}
+            <label className="ml-2 inline-flex items-center gap-1.5 text-xs text-[#6E6254] cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={showCompleted}
+                onChange={(e) => setShowCompleted(e.target.checked)}
+                className="rounded accent-[#F59E0B]"
+              />
+              顯示已換出商品
+            </label>
           </div>
 
-          {/* 即時統計膠囊列（顯示已註冊人數 + 交換中道具數） */}
           <div className="flex items-center gap-2.5 flex-wrap">
             <button
               type="button"
@@ -506,7 +648,7 @@ export default function HomePage() {
             </button>
 
             <span className="text-xs sm:text-sm text-[#8C7B6B]">
-              共 {filteredItems.length} 件交換中道具
+              共 {filteredItems.length} 件道具
             </span>
           </div>
         </div>
@@ -535,12 +677,15 @@ export default function HomePage() {
               const sellerName = getDisplayName(item.user_id);
               const canDelete = isAdmin || (user && user.id === item.user_id);
               const hoursLeft = getRemainingHours(item);
+              const isCompleted = item.status === 'completed';
 
               return (
                 <div
                   key={item.id}
                   onClick={() => openItemModal(item)}
-                  className="cursor-pointer bg-white rounded-3xl border border-[#F3E8D2] overflow-hidden shadow-sm hover:shadow-md hover:-translate-y-0.5 transition flex flex-col"
+                  className={`cursor-pointer bg-white rounded-3xl border border-[#F3E8D2] overflow-hidden shadow-sm hover:shadow-md hover:-translate-y-0.5 transition flex flex-col ${
+                    isCompleted ? 'opacity-75' : ''
+                  }`}
                 >
                   <div className="relative aspect-square bg-[#FDF8EC] flex items-center justify-center overflow-hidden">
                     {coverImg ? (
@@ -549,6 +694,15 @@ export default function HomePage() {
                       <div className="flex flex-col items-center text-[#C4B5A0]">
                         <ImageIcon className="w-10 h-10 mb-1" />
                         <span className="text-xs">無圖片</span>
+                      </div>
+                    )}
+
+                    {/* 已換出半透明印章 */}
+                    {isCompleted && (
+                      <div className="absolute inset-0 bg-black/45 flex items-center justify-center">
+                        <span className="px-4 py-1.5 rounded-full bg-emerald-600 text-white font-bold text-sm border-2 border-white shadow-lg -rotate-6">
+                          ✅ 已換出
+                        </span>
                       </div>
                     )}
 
@@ -588,9 +742,12 @@ export default function HomePage() {
                     </div>
 
                     <div className="flex items-center justify-between pt-2 border-t border-[#F7EFE0] text-xs text-[#8C7B6B]">
-                      <span className="truncate max-w-[120px]" title={`ID: ${sellerInfo?.game_id || ''}`}>
-                        {sellerName}
-                      </span>
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className="truncate max-w-[90px] font-medium">{sellerName}</span>
+                        <span className="text-[10px] text-emerald-700 font-bold shrink-0">
+                          👍{sellerInfo?.good_reviews || 0}
+                        </span>
+                      </div>
                       <span className="inline-flex items-center gap-1 text-[#D97706] font-medium shrink-0">
                         <MessageCircle className="w-3.5 h-3.5" /> 詢問 / 看圖
                       </span>
@@ -602,6 +759,117 @@ export default function HomePage() {
           </div>
         )}
       </main>
+
+      {/* 我的市集（個人中心彈窗） */}
+      {user && showMyMarketModal && (
+        <div
+          onClick={() => setShowMyMarketModal(false)}
+          className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white rounded-3xl max-w-xl w-full max-h-[88vh] flex flex-col border border-[#F3E8D2] shadow-2xl overflow-hidden"
+          >
+            <div className="px-6 py-4 bg-[#FFFDF7] border-b border-[#F3E8D2] flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Store className="w-5 h-5 text-[#F59E0B]" />
+                <h2 className="font-bold text-lg">我的市集個人中心</h2>
+              </div>
+              <button
+                onClick={() => setShowMyMarketModal(false)}
+                className="p-1.5 rounded-full bg-white border border-[#E6D8C3] text-[#8C7B6B]"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 overflow-y-auto space-y-5">
+              {/* 個人名片與修改名稱 */}
+              <div className="bg-[#FFFDF7] border border-[#F3E8D2] rounded-2xl p-4">
+                <div className="flex items-center justify-between text-xs text-[#8C7B6B] mb-3">
+                  <span>
+                    遊戲 ID：<strong className="text-[#4A4238] font-mono">{myProfile?.game_id}</strong>
+                  </span>
+                  <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold">
+                    👍 累計交換好評：{myProfile?.good_reviews || 0} 次
+                  </span>
+                </div>
+
+                <form onSubmit={handleUpdateMyName} className="flex gap-2">
+                  <input
+                    type="text"
+                    value={editGameName}
+                    onChange={(e) => setEditGameName(e.target.value)}
+                    placeholder="修改遊戲名稱..."
+                    className="flex-1 px-3.5 py-2 rounded-xl bg-white border border-[#E6D8C3] text-xs focus:outline-none focus:border-[#F59E0B]"
+                  />
+                  <button
+                    type="submit"
+                    disabled={savingName || !editGameName.trim()}
+                    className="px-4 py-2 rounded-xl bg-[#F59E0B] hover:bg-[#D97706] text-white text-xs font-bold disabled:opacity-50"
+                  >
+                    {savingName ? '儲存中...' : '更新遊戲名稱'}
+                  </button>
+                </form>
+              </div>
+
+              {/* 我發布的道具管理 */}
+              <div>
+                <h3 className="font-bold text-sm mb-2.5">
+                  我上架的道具（共 {myItems.length} 件）
+                </h3>
+                {myItems.length === 0 ? (
+                  <p className="text-xs text-[#A39585] text-center py-6 bg-[#FFFDF7] rounded-2xl border border-[#F3E8D2]">
+                    你目前還沒有上架中的道具喔！
+                  </p>
+                ) : (
+                  <div className="space-y-2.5">
+                    {myItems.map((item) => (
+                      <div
+                        key={item.id}
+                        className="p-3 rounded-2xl bg-[#FFFDF7] border border-[#F3E8D2] flex items-center justify-between gap-3"
+                      >
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <span
+                              className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                                item.status === 'completed'
+                                  ? 'bg-emerald-100 text-emerald-700'
+                                  : 'bg-amber-100 text-amber-800'
+                              }`}
+                            >
+                              {item.status === 'completed' ? '已換出' : '交換中'}
+                            </span>
+                            <span className="font-bold text-sm truncate">{item.title}</span>
+                          </div>
+                          <p className="text-[11px] text-[#8C7B6B] truncate mt-0.5">
+                            許願：{item.wanted_items}
+                          </p>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            onClick={() => handleToggleItemStatus(item)}
+                            className="px-2.5 py-1.5 rounded-xl bg-white border border-[#E6D8C3] hover:border-[#F59E0B] text-xs font-bold text-[#4A4238]"
+                          >
+                            {item.status === 'completed' ? '重新上架' : '標記已換出'}
+                          </button>
+                          <button
+                            onClick={(e) => handleDeleteItem(e, item.id)}
+                            className="p-1.5 rounded-xl bg-red-50 text-red-600 hover:bg-red-100"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 管理者專屬：即時註冊島民名冊視窗 */}
       {isAdmin && showUsersModal && (
@@ -642,6 +910,9 @@ export default function HomePage() {
                       <span className="font-bold text-sm text-[#4A4238]">
                         {u.game_name || u.nickname || '未設定名稱'}
                       </span>
+                      <span className="text-[11px] text-emerald-700 font-bold">
+                        👍 {u.good_reviews || 0}
+                      </span>
                       {u.is_admin && (
                         <span className="px-2 py-0.5 rounded-full bg-amber-600 text-white text-[10px] font-bold">
                           管理者
@@ -649,7 +920,10 @@ export default function HomePage() {
                       )}
                     </div>
                     <div className="text-[#8C7B6B] mt-1">
-                      遊戲 ID：<span className="font-mono font-bold text-[#4A4238]">{u.game_id || '尚未綁定'}</span>
+                      遊戲 ID：
+                      <span className="font-mono font-bold text-[#4A4238]">
+                        {u.game_id || '尚未綁定'}
+                      </span>
                     </div>
                   </div>
                   <div className="text-right text-[11px] text-[#A39585] shrink-0">
@@ -683,22 +957,76 @@ export default function HomePage() {
               <div>
                 <div className="flex items-center flex-wrap gap-2 mb-1">
                   {activeItem.rarity && <RarityBadge rarity={activeItem.rarity as RarityType} />}
-                  <span className="text-xs text-[#8C7B6B]">
-                    發布者：{getDisplayName(activeItem.user_id)}
-                    {usersMap[activeItem.user_id]?.game_id &&
-                      ` (ID: ${usersMap[activeItem.user_id].game_id})`}
+                  <span className="text-xs font-bold text-[#4A4238]">
+                    {getDisplayName(activeItem.user_id)}
+                  </span>
+                  <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold flex items-center gap-0.5">
+                    <ThumbsUp className="w-3 h-3" /> {usersMap[activeItem.user_id]?.good_reviews || 0}
                   </span>
                 </div>
-                <h2 className="text-xl font-bold">{activeItem.title}</h2>
+
+                {/* 一鍵複製賣家遊戲 ID 列 */}
+                {usersMap[activeItem.user_id]?.game_id && (
+                  <div className="flex items-center gap-1.5 mt-1 mb-1">
+                    <span className="text-xs text-[#8C7B6B]">
+                      遊戲 ID：<strong className="font-mono text-[#4A4238]">{usersMap[activeItem.user_id].game_id}</strong>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={(e) =>
+                        handleCopyGameId(e, usersMap[activeItem.user_id].game_id)
+                      }
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#FFFDF7] border border-[#E6D8C3] hover:border-[#F59E0B] text-[11px] font-bold text-[#6E6254] transition"
+                    >
+                      {copiedId === usersMap[activeItem.user_id].game_id ? (
+                        <>
+                          <Check className="w-3 h-3 text-emerald-600" /> 已複製
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3 h-3" /> 複製 ID
+                        </>
+                      )}
+                    </button>
+                  </div>
+                )}
+
+                <h2 className="text-xl font-bold mt-1">{activeItem.title}</h2>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                {/* 賣家自己可標記「已換出」 */}
+                {user && user.id === activeItem.user_id && (
+                  <button
+                    onClick={() => handleToggleItemStatus(activeItem)}
+                    className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-bold transition ${
+                      activeItem.status === 'completed'
+                        ? 'bg-amber-100 text-amber-800'
+                        : 'bg-emerald-500 hover:bg-emerald-600 text-white'
+                    }`}
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    {activeItem.status === 'completed' ? '重新上架' : '標記已換出'}
+                  </button>
+                )}
+
+                {/* 買家可點「1v1 私訊」並自動帶入此商品卡片 */}
                 {user && activeItem.user_id !== user.id && (
                   <button
                     onClick={() => {
                       const targetId = activeItem.user_id;
+                      const itemContext = {
+                        id: activeItem.id,
+                        title: activeItem.title,
+                        wanted_items: activeItem.wanted_items,
+                        image:
+                          Array.isArray(activeItem.images) && activeItem.images.length > 0
+                            ? activeItem.images[0]
+                            : undefined,
+                      };
                       setActiveItem(null);
                       setChatTargetUserId(targetId);
+                      setChatContextItem(itemContext);
                       setShowChatModal(true);
                     }}
                     className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-[#FEF3C7] hover:bg-[#FDE68A] text-[#B45309] text-xs font-bold transition"
@@ -706,6 +1034,7 @@ export default function HomePage() {
                     <MessageSquareHeart className="w-3.5 h-3.5" /> 1v1 私訊
                   </button>
                 )}
+
                 {(isAdmin || (user && user.id === activeItem.user_id)) && (
                   <button
                     onClick={(e) => handleDeleteItem(e, activeItem.id)}
@@ -714,6 +1043,7 @@ export default function HomePage() {
                     <Trash2 className="w-3.5 h-3.5" /> 刪除
                   </button>
                 )}
+
                 <button
                   onClick={() => setActiveItem(null)}
                   className="p-1.5 rounded-full bg-[#FFFDF7] border border-[#E6D8C3] text-[#8C7B6B] hover:text-[#4A4238]"
@@ -756,9 +1086,46 @@ export default function HomePage() {
                   <span>{activeItem.description}</span>
                 </div>
               )}
-              <div className="text-xs text-[#8C7B6B] pt-1">
-                ⏳ 距離自動下架還有約 {getRemainingHours(activeItem)} 小時
+              <div className="flex items-center justify-between pt-1">
+                <span className="text-xs text-[#8C7B6B]">
+                  ⏳ 距離自動下架還有約 {getRemainingHours(activeItem)} 小時
+                </span>
+
+                {/* 異常檢舉按鈕 */}
+                {user && user.id !== activeItem.user_id && (
+                  <button
+                    type="button"
+                    onClick={() => setShowReportBox(!showReportBox)}
+                    className="inline-flex items-center gap-1 text-[11px] text-[#A39585] hover:text-red-500 transition"
+                  >
+                    <Flag className="w-3 h-3" /> 檢舉此道具
+                  </button>
+                )}
               </div>
+
+              {/* 檢舉輸入框 */}
+              {showReportBox && (
+                <form
+                  onSubmit={handleReportItem}
+                  className="mt-2 pt-2.5 border-t border-[#F3E8D2] flex gap-2"
+                >
+                  <input
+                    type="text"
+                    placeholder="請簡述異常原因（例如：非遊戲道具、疑似詐騙...）"
+                    value={reportReason}
+                    onChange={(e) => setReportReason(e.target.value)}
+                    className="flex-1 px-3 py-1.5 rounded-xl bg-white border border-red-200 text-xs focus:outline-none focus:border-red-400"
+                    required
+                  />
+                  <button
+                    type="submit"
+                    disabled={submittingReport}
+                    className="px-3 py-1.5 rounded-xl bg-red-500 hover:bg-red-600 text-white text-xs font-bold disabled:opacity-50"
+                  >
+                    送出檢舉
+                  </button>
+                </form>
+              )}
             </div>
 
             {/* 公開留言詢問區塊 */}
@@ -822,7 +1189,9 @@ export default function HomePage() {
         <DirectChatModal
           currentUserId={user.id}
           initialTargetUserId={chatTargetUserId}
+          initialContextItem={chatContextItem}
           onClose={() => setShowChatModal(false)}
+          onReviewSuccess={fetchData}
         />
       )}
 
