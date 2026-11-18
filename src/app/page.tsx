@@ -4,6 +4,8 @@ import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import { RarityBadge, RarityType } from '@/components/RarityBadge';
+import { GameProfileModal } from '@/components/GameProfileModal';
+import { DirectChatModal } from '@/components/DirectChatModal';
 import {
   Search,
   Plus,
@@ -19,6 +21,7 @@ import {
   Send,
   ShieldCheck,
   ZoomIn,
+  MessageSquareHeart,
 } from 'lucide-react';
 
 const CATEGORIES = [
@@ -35,10 +38,11 @@ export default function HomePage() {
   const supabase = createClient();
   const [user, setUser] = useState<any>(null);
   const [isAdmin, setIsAdmin] = useState(false);
-  const [myNickname, setMyNickname] = useState('島民玩家');
+  const [myProfile, setMyProfile] = useState<{ game_id?: string; game_name?: string } | null>(null);
+  const [needBindProfile, setNeedBindProfile] = useState(false);
 
   const [items, setItems] = useState<any[]>([]);
-  const [usersMap, setUsersMap] = useState<Record<string, string>>({});
+  const [usersMap, setUsersMap] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(true);
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -52,9 +56,12 @@ export default function HomePage() {
   const [newComment, setNewComment] = useState('');
   const [sendingComment, setSendingComment] = useState(false);
 
-  // 通知鈴鐺狀態
+  // 通知鈴鐺 & 1v1 聊天室狀態
   const [notifications, setNotifications] = useState<any[]>([]);
   const [showNotifMenu, setShowNotifMenu] = useState(false);
+  const [showChatModal, setShowChatModal] = useState(false);
+  const [chatTargetUserId, setChatTargetUserId] = useState<string | null>(null);
+  const [unreadDmCount, setUnreadDmCount] = useState(0);
 
   const fetchData = async () => {
     setLoading(true);
@@ -63,18 +70,28 @@ export default function HomePage() {
 
     const { data: usersData } = await supabase
       .from('users')
-      .select('id, nickname, is_admin');
+      .select('id, nickname, game_id, game_name, is_admin');
 
-    const map: Record<string, string> = {};
+    const map: Record<string, any> = {};
+    let foundCurrentUserProfile = false;
+
     if (usersData) {
       usersData.forEach((u: any) => {
-        map[u.id] = u.nickname || '島民玩家';
+        map[u.id] = u;
         if (currentUser && u.id === currentUser.id) {
+          foundCurrentUserProfile = true;
           setIsAdmin(u.is_admin === true);
-          setMyNickname(u.nickname || '島民玩家');
+          setMyProfile({ game_id: u.game_id, game_name: u.game_name });
+          if (!u.game_id || !u.game_name) {
+            setNeedBindProfile(true);
+          }
         }
       });
       setUsersMap(map);
+    }
+
+    if (currentUser && !foundCurrentUserProfile) {
+      setNeedBindProfile(true);
     }
 
     const { data: itemsData } = await supabase
@@ -101,6 +118,13 @@ export default function HomePage() {
         .order('created_at', { ascending: false })
         .limit(20);
       if (notifData) setNotifications(notifData);
+
+      const { count } = await supabase
+        .from('direct_messages')
+        .select('*', { count: 'exact', head: true })
+        .eq('receiver_id', currentUser.id)
+        .eq('is_read', false);
+      setUnreadDmCount(count || 0);
     }
 
     setLoading(false);
@@ -110,6 +134,12 @@ export default function HomePage() {
     fetchData();
   }, []);
 
+  const getDisplayName = (uid: string) => {
+    const u = usersMap[uid];
+    if (!u) return '島民玩家';
+    return u.game_name || u.nickname || '島民玩家';
+  };
+
   const getRemainingHours = (item: any) => {
     const expireTime = item.expires_at
       ? new Date(item.expires_at).getTime()
@@ -117,7 +147,6 @@ export default function HomePage() {
     return Math.max(0, Math.ceil((expireTime - Date.now()) / (1000 * 60 * 60)));
   };
 
-  // 刪除商品（本人或管理者）
   const handleDeleteItem = async (e: React.MouseEvent, itemId: string) => {
     e.stopPropagation();
     if (!confirm('確定要刪除這筆道具嗎？刪除後無法復原喔！')) return;
@@ -152,6 +181,7 @@ export default function HomePage() {
 
     setSendingComment(true);
     const content = newComment.trim();
+    const senderDisplayName = myProfile?.game_name || getDisplayName(user.id);
 
     const { data: inserted, error } = await supabase
       .from('comments')
@@ -170,7 +200,7 @@ export default function HomePage() {
       if (activeItem.user_id !== user.id) {
         await supabase.from('notifications').insert({
           user_id: activeItem.user_id,
-          sender_name: myNickname,
+          sender_name: senderDisplayName,
           item_id: activeItem.id,
           item_title: activeItem.title,
           message: content,
@@ -216,6 +246,18 @@ export default function HomePage() {
 
   return (
     <div className="min-h-screen bg-[#FFFDF7] text-[#4A4238]">
+      {/* 首次登入未綁定遊戲 ID / 遊戲名稱時強制彈出設定視窗 */}
+      {user && needBindProfile && (
+        <GameProfileModal
+          userId={user.id}
+          onSuccess={(gId, gName) => {
+            setMyProfile({ game_id: gId, game_name: gName });
+            setNeedBindProfile(false);
+            fetchData();
+          }}
+        />
+      )}
+
       {/* 頂部導覽列 */}
       <header className="sticky top-0 z-20 bg-[#FFFDF7]/90 backdrop-blur-md border-b border-[#F3E8D2]">
         <div className="max-w-6xl mx-auto px-4 py-3.5 flex flex-wrap items-center justify-between gap-3">
@@ -227,11 +269,18 @@ export default function HomePage() {
               <span className="text-xl font-bold tracking-tight block leading-none">
                 寵物島市集
               </span>
-              {isAdmin && (
-                <span className="inline-flex items-center gap-1 text-[11px] text-amber-700 font-bold mt-0.5">
-                  <ShieldCheck className="w-3 h-3" /> 管理者模式
-                </span>
-              )}
+              <div className="flex items-center gap-2 mt-0.5">
+                {isAdmin && (
+                  <span className="inline-flex items-center gap-0.5 text-[11px] text-amber-700 font-bold">
+                    <ShieldCheck className="w-3 h-3" /> 管理者
+                  </span>
+                )}
+                {myProfile?.game_name && (
+                  <span className="text-[11px] text-[#8C7B6B]">
+                    {myProfile.game_name} (ID: {myProfile.game_id})
+                  </span>
+                )}
+              </div>
             </div>
           </Link>
 
@@ -248,9 +297,28 @@ export default function HomePage() {
           </div>
 
           {/* 右側操作按鈕 */}
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2">
             {user ? (
               <>
+                {/* 1v1 私訊聊天室按鈕 */}
+                <button
+                  onClick={() => {
+                    setChatTargetUserId(null);
+                    setShowChatModal(true);
+                    setUnreadDmCount(0);
+                  }}
+                  className="relative inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-white border border-[#E6D8C3] hover:border-[#F59E0B] text-xs font-bold text-[#4A4238] transition"
+                >
+                  <MessageSquareHeart className="w-4 h-4 text-[#F59E0B]" />
+                  <span className="hidden sm:inline">1v1 私訊</span>
+                  {unreadDmCount > 0 && (
+                    <span className="px-1.5 py-0.2 rounded-full bg-red-500 text-white text-[10px]">
+                      {unreadDmCount}
+                    </span>
+                  )}
+                </button>
+
+                {/* 留言通知鈴鐺 */}
                 <div className="relative">
                   <button
                     onClick={markNotificationsRead}
@@ -287,7 +355,7 @@ export default function HomePage() {
                               className="p-2.5 rounded-xl bg-[#FFFDF7] hover:bg-[#FEF3C7]/50 cursor-pointer border border-[#F3E8D2] text-xs"
                             >
                               <p className="font-bold text-[#4A4238]">
-                                @{n.sender_name} 在「{n.item_title}」留言：
+                                {n.sender_name} 在「{n.item_title}」留言：
                               </p>
                               <p className="text-[#6E6254] line-clamp-2 mt-0.5">{n.message}</p>
                             </div>
@@ -385,7 +453,8 @@ export default function HomePage() {
             {filteredItems.map((item) => {
               const coverImg =
                 Array.isArray(item.images) && item.images.length > 0 ? item.images[0] : null;
-              const sellerName = usersMap[item.user_id] || '島民玩家';
+              const sellerInfo = usersMap[item.user_id];
+              const sellerName = getDisplayName(item.user_id);
               const canDelete = isAdmin || (user && user.id === item.user_id);
               const hoursLeft = getRemainingHours(item);
 
@@ -441,9 +510,11 @@ export default function HomePage() {
                     </div>
 
                     <div className="flex items-center justify-between pt-2 border-t border-[#F7EFE0] text-xs text-[#8C7B6B]">
-                      <span>@{sellerName}</span>
-                      <span className="inline-flex items-center gap-1 text-[#D97706] font-medium">
-                        <MessageCircle className="w-3.5 h-3.5" /> 點擊詢問 / 看大圖
+                      <span className="truncate max-w-[120px]" title={`ID: ${sellerInfo?.game_id || ''}`}>
+                        {sellerName}
+                      </span>
+                      <span className="inline-flex items-center gap-1 text-[#D97706] font-medium shrink-0">
+                        <MessageCircle className="w-3.5 h-3.5" /> 詢問 / 看圖
                       </span>
                     </div>
                   </div>
@@ -466,16 +537,31 @@ export default function HomePage() {
           >
             <div className="flex items-start justify-between gap-3 mb-4">
               <div>
-                <div className="flex items-center gap-2 mb-1">
+                <div className="flex items-center flex-wrap gap-2 mb-1">
                   {activeItem.rarity && <RarityBadge rarity={activeItem.rarity as RarityType} />}
                   <span className="text-xs text-[#8C7B6B]">
-                    發布者：@{usersMap[activeItem.user_id] || '島民玩家'}
+                    發布者：{getDisplayName(activeItem.user_id)}
+                    {usersMap[activeItem.user_id]?.game_id &&
+                      ` (ID: ${usersMap[activeItem.user_id].game_id})`}
                   </span>
                 </div>
                 <h2 className="text-xl font-bold">{activeItem.title}</h2>
               </div>
 
               <div className="flex items-center gap-2">
+                {user && activeItem.user_id !== user.id && (
+                  <button
+                    onClick={() => {
+                      const targetId = activeItem.user_id;
+                      setActiveItem(null);
+                      setChatTargetUserId(targetId);
+                      setShowChatModal(true);
+                    }}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-[#FEF3C7] hover:bg-[#FDE68A] text-[#B45309] text-xs font-bold transition"
+                  >
+                    <MessageSquareHeart className="w-3.5 h-3.5" /> 1v1 私訊
+                  </button>
+                )}
                 {(isAdmin || (user && user.id === activeItem.user_id)) && (
                   <button
                     onClick={(e) => handleDeleteItem(e, activeItem.id)}
@@ -493,7 +579,6 @@ export default function HomePage() {
               </div>
             </div>
 
-            {/* 圖片展示（點擊可放大） */}
             {Array.isArray(activeItem.images) && activeItem.images.length > 0 && (
               <div className="mb-4">
                 <div className="flex gap-2.5 overflow-x-auto pb-2">
@@ -532,16 +617,16 @@ export default function HomePage() {
               </div>
             </div>
 
-            {/* 留言詢問區塊 */}
+            {/* 公開留言詢問區塊 */}
             <div className="border-t border-[#F3E8D2] pt-4">
               <h3 className="font-bold text-sm mb-3 flex items-center gap-1.5">
-                <MessageCircle className="w-4 h-4 text-[#F59E0B]" /> 交換詢問與報價 ({comments.length})
+                <MessageCircle className="w-4 h-4 text-[#F59E0B]" /> 公開留言詢問 ({comments.length})
               </h3>
 
               <div className="space-y-2.5 max-h-48 overflow-y-auto mb-4 pr-1">
                 {comments.length === 0 ? (
                   <p className="text-xs text-[#A39585] text-center py-4">
-                    還沒有人留言，搶先提出你的交換方案吧！
+                    還沒有人留言，也可以直接點右上角「1v1 私訊」找賣家洽談喔！
                   </p>
                 ) : (
                   comments.map((c) => (
@@ -551,7 +636,7 @@ export default function HomePage() {
                     >
                       <div className="flex justify-between text-[#8C7B6B] mb-1">
                         <span className="font-bold text-[#4A4238]">
-                          @{usersMap[c.user_id] || '島民玩家'}
+                          {getDisplayName(c.user_id)}
                         </span>
                         <span>
                           {new Date(c.created_at).toLocaleTimeString('zh-TW', {
@@ -569,7 +654,7 @@ export default function HomePage() {
               <form onSubmit={handleSendComment} className="flex gap-2">
                 <input
                   type="text"
-                  placeholder={user ? '輸入想交換的道具或遊戲 ID...' : '請先登入後再留言詢問'}
+                  placeholder={user ? '輸入想交換的道具或留言...' : '請先登入後再留言詢問'}
                   value={newComment}
                   onChange={(e) => setNewComment(e.target.value)}
                   disabled={!user || sendingComment}
@@ -586,6 +671,15 @@ export default function HomePage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* 1 對 1 聊天室視窗 */}
+      {user && showChatModal && (
+        <DirectChatModal
+          currentUserId={user.id}
+          initialTargetUserId={chatTargetUserId}
+          onClose={() => setShowChatModal(false)}
+        />
       )}
 
       {/* 全螢幕圖片放大燈箱 */}
