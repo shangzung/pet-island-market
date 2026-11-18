@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies, headers } from 'next/headers';
+import { checkSensitiveContent } from '@/lib/contentFilter';
 
 export async function POST(request: Request) {
   try {
@@ -34,7 +35,20 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: '請先登入帳號' }, { status: 401 });
     }
 
-    // 確認權限與是否遭停權
+    const body = await request.json();
+
+    // 敏感關鍵字自動過濾（防現金買賣 / 代儲 / 外掛）
+    const combinedText = `${body.title || ''} ${body.wanted_items || ''} ${body.description || ''}`;
+    const filterResult = checkSensitiveContent(combinedText);
+    if (!filterResult.isClean) {
+      return NextResponse.json(
+        {
+          error: `⚠️ 安全系統攔截：內容包含禁止的敏感關鍵字「${filterResult.matchedWord}」。本市集嚴禁現金買賣、代儲或外掛相關交易！`,
+        },
+        { status: 400 }
+      );
+    }
+
     const { data: profile } = await supabase
       .from('users')
       .select('is_admin, is_banned')
@@ -50,7 +64,6 @@ export async function POST(request: Request) {
 
     const isAdmin = profile?.is_admin === true;
 
-    // 檢查 24 小時內同帳號或同 IP 是否已經發布過
     if (!isAdmin) {
       const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
@@ -68,10 +81,8 @@ export async function POST(request: Request) {
       }
     }
 
-    // 順便自動清理資料庫中已超過 48 小時的過期貼文
     await supabase.rpc('cleanup_expired_items');
 
-    const body = await request.json();
     const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString();
 
     const { error: insertError } = await supabase.from('items').insert({

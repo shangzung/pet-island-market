@@ -1,11 +1,13 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import { RarityBadge, RarityType } from '@/components/RarityBadge';
 import { GameProfileModal } from '@/components/GameProfileModal';
 import { DirectChatModal } from '@/components/DirectChatModal';
+import { AdminDashboardModal } from '@/components/AdminDashboardModal';
+import { checkSensitiveContent } from '@/lib/contentFilter';
 import {
   Search,
   Plus,
@@ -35,6 +37,9 @@ import {
   HeartHandshake,
   Ban,
   AlertTriangle,
+  Flame,
+  BarChart3,
+  PartyPopper,
 } from 'lucide-react';
 
 const CATEGORIES = [
@@ -60,17 +65,21 @@ export default function HomePage() {
   const [needBindProfile, setNeedBindProfile] = useState(false);
 
   const [items, setItems] = useState<any[]>([]);
+  const [recentSearches, setRecentSearches] = useState<string[]>([]);
   const [favoriteIds, setFavoriteIds] = useState<string[]>([]);
   const [usersList, setUsersList] = useState<any[]>([]);
   const [usersMap, setUsersMap] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(true);
 
-  // 看板切換（交換市集 offer / 島民許願池 wish）與篩選
+  // 看板切換與篩選
   const [activeBoard, setActiveBoard] = useState<'offer' | 'wish'>('offer');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [selectedRarity, setSelectedRarity] = useState('全部');
   const [showCompleted, setShowCompleted] = useState(false);
+
+  // 成交快報輪播索引
+  const [tickerIndex, setTickerIndex] = useState(0);
 
   // 全站公告狀態
   const [announcement, setAnnouncement] = useState<{ content: string; is_active: boolean }>({
@@ -85,6 +94,7 @@ export default function HomePage() {
   const [activeItem, setActiveItem] = useState<any | null>(null);
   const [zoomedImage, setZoomedImage] = useState<string | null>(null);
   const [showUsersModal, setShowUsersModal] = useState(false);
+  const [showAdminDashboard, setShowAdminDashboard] = useState(false);
   const [showMyMarketModal, setShowMyMarketModal] = useState(false);
   const [myMarketTab, setMyMarketTab] = useState<'my_items' | 'favorites'>('my_items');
 
@@ -126,6 +136,17 @@ export default function HomePage() {
       setAnnouncement(annData);
       setEditAnnounceText(annData.content);
       setEditAnnounceActive(annData.is_active);
+    }
+
+    // 讀取最近 48 小時搜尋關鍵字（用於計算熱門排行榜）
+    const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+    const { data: searchLogsData } = await supabase
+      .from('search_logs')
+      .select('keyword')
+      .gte('created_at', fortyEightHoursAgo)
+      .limit(200);
+    if (searchLogsData) {
+      setRecentSearches(searchLogsData.map((s) => s.keyword));
     }
 
     // 讀取會員清單
@@ -181,7 +202,6 @@ export default function HomePage() {
     }
 
     if (currentUser) {
-      // 讀取收藏列表
       const { data: favData } = await supabase
         .from('favorites')
         .select('item_id')
@@ -190,7 +210,6 @@ export default function HomePage() {
         setFavoriteIds(favData.map((f) => f.item_id));
       }
 
-      // 讀取通知
       const { data: notifData } = await supabase
         .from('notifications')
         .select('*')
@@ -199,7 +218,6 @@ export default function HomePage() {
         .limit(20);
       if (notifData) setNotifications(notifData);
 
-      // 讀取未讀私訊數
       const { count } = await supabase
         .from('direct_messages')
         .select('*', { count: 'exact', head: true })
@@ -262,6 +280,57 @@ export default function HomePage() {
     };
   }, [user]);
 
+  // 計算 48 小時熱門搜尋與許願排行榜 TOP 5
+  const trendingKeywords = useMemo(() => {
+    const freq: Record<string, number> = {};
+
+    // 1. 統計許願池標題與許願清單出現的關鍵詞
+    items.forEach((item) => {
+      if (item.post_type === 'wish' && item.title) {
+        const cleanTitle = item.title.replace(/急徵|徵求|徵|！|!/g, '').trim();
+        if (cleanTitle.length >= 2 && cleanTitle.length <= 12) {
+          freq[cleanTitle] = (freq[cleanTitle] || 0) + 2;
+        }
+      }
+    });
+
+    // 2. 統計最近 48 小時搜尋紀錄
+    recentSearches.forEach((kw) => {
+      const cleanKw = kw.trim();
+      if (cleanKw.length >= 2 && cleanKw.length <= 12) {
+        freq[cleanKw] = (freq[cleanKw] || 0) + 1;
+      }
+    });
+
+    return Object.entries(freq)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([word]) => word);
+  }, [items, recentSearches]);
+
+  // 近期成交動態跑馬燈資料
+  const completedTickers = useMemo(() => {
+    return items.filter((i) => i.status === 'completed').slice(0, 10);
+  }, [items]);
+
+  useEffect(() => {
+    if (completedTickers.length <= 1) return;
+    const timer = setInterval(() => {
+      setTickerIndex((prev) => (prev + 1) % completedTickers.length);
+    }, 4000);
+    return () => clearInterval(timer);
+  }, [completedTickers.length]);
+
+  // 搜尋停頓 1.5 秒後紀錄熱門搜尋關鍵字
+  useEffect(() => {
+    const kw = searchQuery.trim();
+    if (kw.length < 2 || kw.length > 15) return;
+    const timer = setTimeout(() => {
+      supabase.from('search_logs').insert({ keyword: kw }).then(() => {});
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
   const getDisplayName = (uid: string) => {
     const u = usersMap[uid];
     if (!u) return '島民玩家';
@@ -275,7 +344,6 @@ export default function HomePage() {
     return Math.max(0, Math.ceil((expireTime - Date.now()) / (1000 * 60 * 60)));
   };
 
-  // 愛心收藏 / 取消收藏
   const handleToggleFavorite = async (e: React.MouseEvent, itemId: string) => {
     e.stopPropagation();
     if (!user) {
@@ -303,7 +371,6 @@ export default function HomePage() {
     }
   };
 
-  // 管理者儲存全站公告
   const handleSaveAnnouncement = async (e: React.FormEvent) => {
     e.preventDefault();
     const { error } = await supabase
@@ -323,10 +390,12 @@ export default function HomePage() {
     }
   };
 
-  // 管理者一鍵停權 / 解除停權
+  // 管理者停權 / 解除停權（同步維護跨帳號遊戲 ID 黑名單）
   const handleToggleBanUser = async (targetUser: any) => {
     const nextBanned = !targetUser.is_banned;
-    const actionText = nextBanned ? '停權（禁止發文、留言與私訊）' : '解除停權';
+    const actionText = nextBanned
+      ? '停權（並將其遊戲 ID 加入跨帳號永久黑名單）'
+      : '解除停權（並移出遊戲 ID 黑名單）';
     if (!confirm(`確定要將「${targetUser.game_name || targetUser.nickname}」${actionText}嗎？`)) {
       return;
     }
@@ -337,6 +406,17 @@ export default function HomePage() {
       .eq('id', targetUser.id);
 
     if (!error) {
+      if (targetUser.game_id) {
+        if (nextBanned) {
+          await supabase.from('banned_game_ids').upsert({
+            game_id: targetUser.game_id,
+            reason: '管理員手動停權封鎖',
+          });
+        } else {
+          await supabase.from('banned_game_ids').delete().eq('game_id', targetUser.game_id);
+        }
+      }
+
       setUsersList((prev) =>
         prev.map((u) => (u.id === targetUser.id ? { ...u, is_banned: nextBanned } : u))
       );
@@ -403,7 +483,7 @@ export default function HomePage() {
     });
 
     if (!error) {
-      alert('檢舉已送出！管理員會收到通知並盡快審核處理。');
+      alert('檢舉已送出！管理員會收到通知並進入戰情室審核處理。');
       setShowReportBox(false);
       setReportReason('');
     } else {
@@ -416,8 +496,14 @@ export default function HomePage() {
     e.preventDefault();
     if (!user || !editGameName.trim()) return;
 
-    setSavingName(true);
     const cleanName = editGameName.trim();
+    const filterResult = checkSensitiveContent(cleanName);
+    if (!filterResult.isClean) {
+      alert(`遊戲名稱包含禁止字詞「${filterResult.matchedWord}」，請重新輸入！`);
+      return;
+    }
+
+    setSavingName(true);
     const { error } = await supabase
       .from('users')
       .update({ game_name: cleanName, nickname: cleanName })
@@ -461,8 +547,16 @@ export default function HomePage() {
     }
     if (!newComment.trim() || !activeItem) return;
 
-    setSendingComment(true);
     const content = newComment.trim();
+    const filterResult = checkSensitiveContent(content);
+    if (!filterResult.isClean) {
+      alert(
+        `⚠️ 安全系統攔截：留言包含禁止字詞「${filterResult.matchedWord}」。本平台嚴禁現金買賣或私下金錢交易！`
+      );
+      return;
+    }
+
+    setSendingComment(true);
     const senderDisplayName = myProfile?.game_name || getDisplayName(user.id);
 
     const { data: inserted, error } = await supabase
@@ -602,6 +696,20 @@ export default function HomePage() {
         </div>
       )}
 
+      {/* 近期成交動態跑馬燈 */}
+      {completedTickers.length > 0 && (
+        <div className="bg-emerald-50/90 border-b border-emerald-200/70 px-4 py-1.5 text-xs text-emerald-800">
+          <div className="max-w-6xl mx-auto flex items-center justify-center gap-2">
+            <PartyPopper className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+            <span className="truncate font-medium">
+              🎉 成交快報：島民【{getDisplayName(completedTickers[tickerIndex]?.user_id)}】剛剛順利完成了一筆{' '}
+              <strong>{completedTickers[tickerIndex]?.rarity}</strong> 道具「
+              {completedTickers[tickerIndex]?.title}」的交換！
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* 停權警告橫幅 */}
       {isBanned && (
         <div className="bg-red-600 text-white text-xs font-bold text-center py-2 px-4">
@@ -653,12 +761,31 @@ export default function HomePage() {
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full pl-10 pr-4 py-2 rounded-full bg-white border border-[#E6D8C3] text-sm focus:outline-none focus:border-[#F59E0B]"
             />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-[#A39585] hover:text-[#4A4238]"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
 
           {/* 右側操作按鈕 */}
           <div className="flex items-center gap-2">
             {user ? (
               <>
+                {/* 管理者專屬：站長數據戰情室按鈕 */}
+                {isAdmin && (
+                  <button
+                    onClick={() => setShowAdminDashboard(true)}
+                    className="inline-flex items-center gap-1 px-3 py-2 rounded-full bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-2xs transition"
+                  >
+                    <BarChart3 className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">戰情室</span>
+                  </button>
+                )}
+
                 <button
                   onClick={() => setShowMyMarketModal(true)}
                   title="我的市集與收藏"
@@ -770,7 +897,7 @@ export default function HomePage() {
           </div>
         </div>
 
-        {/* 雙看板切換頁籤（🔄 交換市集 vs 🙏 島民許願池）+ 分類標籤 */}
+        {/* 雙看板切換頁籤 + 分類標籤 */}
         <div className="max-w-6xl mx-auto px-4 pb-3 flex flex-wrap items-center justify-between gap-2.5">
           <div className="flex items-center gap-1.5 bg-white p-1 rounded-full border border-[#E6D8C3]">
             <button
@@ -814,7 +941,26 @@ export default function HomePage() {
       </header>
 
       {/* 主內容區 */}
-      <main className="max-w-6xl mx-auto px-4 py-6 flex-1 w-full">
+      <main className="max-w-6xl mx-auto px-4 py-5 flex-1 w-full">
+        {/* 🔥 48 小時熱門搜尋與許願排行榜 (Trend Board) */}
+        {trendingKeywords.length > 0 && (
+          <div className="mb-5 px-4 py-2.5 rounded-2xl bg-white border border-[#F3E8D2] flex items-center gap-2 flex-wrap">
+            <span className="inline-flex items-center gap-1 text-xs font-bold text-orange-600 shrink-0">
+              <Flame className="w-4 h-4 fill-orange-500" /> 48h 熱門搶手榜：
+            </span>
+            {trendingKeywords.map((kw, idx) => (
+              <button
+                key={kw}
+                onClick={() => setSearchQuery(kw)}
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-[#FFFDF7] hover:bg-[#FEF3C7] border border-[#E6D8C3] text-xs font-medium text-[#4A4238] transition"
+              >
+                <span className="text-[10px] font-bold text-[#D97706]">TOP {idx + 1}</span>
+                <span>{kw}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
         <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-sm text-[#8C7B6B]">稀有度：</span>
@@ -938,7 +1084,6 @@ export default function HomePage() {
                       </div>
                     )}
 
-                    {/* 左上稀有度 + 許願標籤 */}
                     <div className="absolute top-3 left-3 flex items-center gap-1">
                       {item.rarity && <RarityBadge rarity={item.rarity as RarityType} />}
                       {isWish && (
@@ -948,7 +1093,6 @@ export default function HomePage() {
                       )}
                     </div>
 
-                    {/* 右上 48h 倒數、愛心收藏 & 刪除按鈕 */}
                     <div className="absolute top-3 right-3 flex items-center gap-1.5">
                       <span className="px-2 py-1 rounded-full bg-black/55 text-white text-[10px] font-medium flex items-center gap-1">
                         <Clock className="w-3 h-3" /> 剩 {hoursLeft}h
@@ -1033,6 +1177,16 @@ export default function HomePage() {
         </div>
       </footer>
 
+      {/* 站長數據戰情室彈窗 */}
+      {isAdmin && showAdminDashboard && (
+        <AdminDashboardModal
+          usersList={usersList}
+          items={items}
+          onClose={() => setShowAdminDashboard(false)}
+          onRefreshData={fetchData}
+        />
+      )}
+
       {/* 我的市集（個人中心 + 愛心收藏彈窗） */}
       {user && showMyMarketModal && (
         <div
@@ -1057,7 +1211,6 @@ export default function HomePage() {
             </div>
 
             <div className="p-5 overflow-y-auto space-y-5">
-              {/* 個人名片與修改名稱 */}
               <div className="bg-[#FFFDF7] border border-[#F3E8D2] rounded-2xl p-4">
                 <div className="flex items-center justify-between text-xs text-[#8C7B6B] mb-3">
                   <span>
@@ -1086,7 +1239,6 @@ export default function HomePage() {
                 </form>
               </div>
 
-              {/* 切換：我發布的貼文 vs 我的愛心收藏 */}
               <div className="grid grid-cols-2 gap-2 p-1 rounded-2xl bg-[#FFFDF7] border border-[#E6D8C3]">
                 <button
                   onClick={() => setMyMarketTab('my_items')}
@@ -1261,7 +1413,7 @@ export default function HomePage() {
                       )}
                       {u.is_banned && (
                         <span className="px-2 py-0.5 rounded-full bg-red-600 text-white text-[10px] font-bold">
-                          已停權
+                          已停權（ID黑名單）
                         </span>
                       )}
                     </div>
@@ -1294,7 +1446,7 @@ export default function HomePage() {
                         }`}
                       >
                         <Ban className="w-3 h-3" />
-                        {u.is_banned ? '解除停權' : '停權帳號'}
+                        {u.is_banned ? '解除停權' : '停權並封鎖ID'}
                       </button>
                     )}
                   </div>
@@ -1493,7 +1645,7 @@ export default function HomePage() {
                 >
                   <input
                     type="text"
-                    placeholder="請簡述異常原因（例如：非遊戲道具、疑似詐騙...）"
+                    placeholder="請簡述異常原因（例如：現金買賣、疑似詐騙...）"
                     value={reportReason}
                     onChange={(e) => setReportReason(e.target.value)}
                     className="flex-1 px-3 py-1.5 rounded-xl bg-white border border-red-200 text-xs focus:outline-none focus:border-red-400"

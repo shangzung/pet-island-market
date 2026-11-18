@@ -1,0 +1,18 @@
+{
+  "name": "寵物島市集 - 遊戲道具交換平台",
+  "short_name": "寵物島市集",
+  "description": "寵物島玩家專用的道具交換、許願媒合與 1v1 即時私訊交易市集",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#FFFDF7",
+  "theme_color": "#F59E0B",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

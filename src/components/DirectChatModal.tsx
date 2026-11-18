@@ -1,5 +1,5 @@
 'use client';
-
+import { checkSensitiveContent } from '@/lib/contentFilter';
 import React, { useEffect, useState, useRef } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import {
@@ -227,6 +227,11 @@ export function DirectChatModal({
 
     setSending(true);
     const content = textToSend.trim();
+	const filterResult = checkSensitiveContent(content);
+    if (!filterResult.isClean) {
+      alert(`⚠️ 訊息包含禁止字詞「${filterResult.matchedWord}」，本平台嚴禁現金買賣或私下金錢交易！`);
+      return;
+    }
     if (overrideText === undefined) setNewMessage('');
 
     const { data: inserted, error } = await supabase

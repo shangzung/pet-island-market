@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { Gamepad2, CheckCircle2, Sparkles } from 'lucide-react';
+import { checkSensitiveContent } from '@/lib/contentFilter';
 
 interface GameProfileModalProps {
   userId: string;
@@ -27,10 +28,32 @@ export function GameProfileModal({ userId, onSuccess }: GameProfileModalProps) {
       return;
     }
 
+    // 檢查遊戲名稱是否包含違禁詞
+    const filterCheck = checkSensitiveContent(cleanName);
+    if (!filterCheck.isClean) {
+      setErrorMsg(`遊戲名稱包含違禁字詞「${filterCheck.matchedWord}」，請重新輸入！`);
+      return;
+    }
+
     setSaving(true);
     setErrorMsg('');
 
-    // 檢查遊戲 ID 是否已被其他帳號綁定
+    // 1. 檢查此遊戲 ID 是否已被列入「跨帳號高風險黑名單」
+    const { data: bannedRecord } = await supabase
+      .from('banned_game_ids')
+      .select('game_id, reason')
+      .eq('game_id', cleanId)
+      .maybeSingle();
+
+    if (bannedRecord) {
+      setErrorMsg(
+        `⚠️ 系統安全攔截：遊戲 ID「${cleanId}」因曾違反交易規範（${bannedRecord.reason}）已被列入永久黑名單，無法綁定使用！`
+      );
+      setSaving(false);
+      return;
+    }
+
+    // 2. 檢查遊戲 ID 是否已被其他正常帳號綁定
     const { data: existing } = await supabase
       .from('users')
       .select('id')
@@ -50,7 +73,7 @@ export function GameProfileModal({ userId, onSuccess }: GameProfileModalProps) {
         id: userId,
         game_id: cleanId,
         game_name: cleanName,
-        nickname: cleanName, // 同步將市集顯示暱稱更新為遊戲名稱
+        nickname: cleanName,
       });
 
     if (error) {
@@ -91,7 +114,7 @@ export function GameProfileModal({ userId, onSuccess }: GameProfileModalProps) {
             </div>
 
             {errorMsg && (
-              <div className="my-4 p-3 rounded-2xl bg-red-50 border border-red-200 text-red-600 text-xs">
+              <div className="my-4 p-3 rounded-2xl bg-red-50 border border-red-200 text-red-600 text-xs leading-relaxed">
                 {errorMsg}
               </div>
             )}
