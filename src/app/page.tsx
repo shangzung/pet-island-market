@@ -57,6 +57,9 @@ const CATEGORIES = [
 
 const RARITIES = ['全部', 'SR', 'R', 'N'];
 
+const DEFAULT_ANNOUNCEMENT =
+  '🎉 慶祝新版本上線！全站島民免費升級：每日發文上限開放至 5 篇、貼文保留延長至 7 天（168小時）！若「遊戲 ID」與「遊戲名稱」先前填反，可點擊上方「我的市集」修改修正；交換前請務必核對「遊戲 ID」與「👍 好評數」，祝大家歐氣滿滿！';
+
 export default function HomePage() {
   const supabase = createClient();
   const [user, setUser] = useState<any>(null);
@@ -88,20 +91,22 @@ export default function HomePage() {
   // 成交快報輪播索引
   const [tickerIndex, setTickerIndex] = useState(0);
 
-  // 全站公告、贊助連結與 VIP 系統總開關狀態
+  // 全站公告、贊助連結、VIP 系統總開關與每日發文上限
   const [announcement, setAnnouncement] = useState<{
     content: string;
     is_active: boolean;
     sponsor_url?: string;
     vip_enabled?: boolean;
+    daily_post_limit?: number;
   }>({
-    content: '',
-    is_active: false,
+    content: DEFAULT_ANNOUNCEMENT,
+    is_active: true,
     sponsor_url: '',
     vip_enabled: false,
+    daily_post_limit: 5,
   });
   const [showEditAnnounce, setShowEditAnnounce] = useState(false);
-  const [editAnnounceText, setEditAnnounceText] = useState('');
+  const [editAnnounceText, setEditAnnounceText] = useState(DEFAULT_ANNOUNCEMENT);
   const [editAnnounceActive, setEditAnnounceActive] = useState(true);
 
   // 彈窗狀態
@@ -141,6 +146,10 @@ export default function HomePage() {
   const [unreadDmCount, setUnreadDmCount] = useState(0);
 
   const vipEnabled = announcement.vip_enabled === true;
+  const dailyPostLimit =
+    typeof announcement.daily_post_limit === 'number' && announcement.daily_post_limit > 0
+      ? announcement.daily_post_limit
+      : 5;
 
   const isUserVip = (u: any) => {
     if (!vipEnabled) return false;
@@ -155,19 +164,25 @@ export default function HomePage() {
 
     const { data: annData } = await supabase
       .from('site_announcements')
-      .select('content, is_active, sponsor_url, vip_enabled')
+      .select('content, is_active, sponsor_url, vip_enabled, daily_post_limit')
       .eq('id', 1)
       .maybeSingle();
+
     if (annData) {
       const isVipOn = annData.vip_enabled === true;
+      const postLimit =
+        typeof annData.daily_post_limit === 'number' && annData.daily_post_limit > 0
+          ? annData.daily_post_limit
+          : 5;
       setAnnouncement({
-        content: annData.content,
-        is_active: annData.is_active,
-        sponsor_url: annData.sponsor_url,
+        content: annData.content || DEFAULT_ANNOUNCEMENT,
+        is_active: annData.is_active ?? true,
+        sponsor_url: annData.sponsor_url || '',
         vip_enabled: isVipOn,
+        daily_post_limit: postLimit,
       });
-      setEditAnnounceText(annData.content);
-      setEditAnnounceActive(annData.is_active);
+      setEditAnnounceText(annData.content || DEFAULT_ANNOUNCEMENT);
+      setEditAnnounceActive(annData.is_active ?? true);
       setSortBy(isVipOn ? 'vip_first' : 'newest');
     }
 
@@ -229,7 +244,7 @@ export default function HomePage() {
       const validItems = itemsData.filter((item) => {
         const expireTime = item.expires_at
           ? new Date(item.expires_at).getTime()
-          : new Date(item.created_at).getTime() + 48 * 60 * 60 * 1000;
+          : new Date(item.created_at).getTime() + 168 * 60 * 60 * 1000;
         return expireTime > now;
       });
       setItems(validItems);
@@ -369,7 +384,7 @@ export default function HomePage() {
   const getRemainingHours = (item: any) => {
     const expireTime = item.expires_at
       ? new Date(item.expires_at).getTime()
-      : new Date(item.created_at).getTime() + 48 * 60 * 60 * 1000;
+      : new Date(item.created_at).getTime() + 168 * 60 * 60 * 1000;
     return Math.max(0, Math.ceil((expireTime - Date.now()) / (1000 * 60 * 60)));
   };
 
@@ -428,7 +443,7 @@ export default function HomePage() {
       .from('site_announcements')
       .upsert({
         id: 1,
-        content: announcement.content || '🎉 歡迎來到寵物島市集！',
+        content: announcement.content || DEFAULT_ANNOUNCEMENT,
         is_active: announcement.is_active,
         sponsor_url: newUrl,
         updated_at: new Date().toISOString(),
@@ -443,7 +458,7 @@ export default function HomePage() {
       .from('site_announcements')
       .upsert({
         id: 1,
-        content: announcement.content || '🎉 歡迎來到寵物島市集！',
+        content: announcement.content || DEFAULT_ANNOUNCEMENT,
         is_active: announcement.is_active,
         vip_enabled: nextEnabled,
         updated_at: new Date().toISOString(),
@@ -454,6 +469,24 @@ export default function HomePage() {
       setSortBy(nextEnabled ? 'vip_first' : 'newest');
     } else {
       alert('切換 VIP 系統狀態失敗：' + error.message);
+    }
+  };
+
+  const handleUpdateDailyPostLimit = async (nextLimit: number) => {
+    const { error } = await supabase
+      .from('site_announcements')
+      .upsert({
+        id: 1,
+        content: announcement.content || DEFAULT_ANNOUNCEMENT,
+        is_active: announcement.is_active,
+        daily_post_limit: nextLimit,
+        updated_at: new Date().toISOString(),
+      });
+
+    if (!error) {
+      setAnnouncement((prev) => ({ ...prev, daily_post_limit: nextLimit }));
+    } else {
+      alert('更新每日發文上限失敗：' + error.message);
     }
   };
 
@@ -734,7 +767,6 @@ export default function HomePage() {
     window.location.reload();
   };
 
-  // 篩選 + 排序（僅在 VIP 系統開啟時套用 VIP 優先置頂）
   const filteredItems = useMemo(() => {
     const list = items.filter((item) => {
       const itemPostType = item.post_type === 'wish' ? 'wish' : 'offer';
@@ -888,7 +920,7 @@ export default function HomePage() {
             {user && myProfile?.game_name && (
               <button
                 onClick={() => setShowMyMarketModal(true)}
-                title="點擊打開「我的市集」與收藏清單"
+                title="點擊打開「我的市集」修改遊戲 ID / 名稱與查看收藏"
                 className="hidden lg:inline-flex items-center gap-1.5 ml-1 px-3 py-1.5 rounded-full bg-white border border-[#E6D8C3] hover:border-[#F59E0B] text-xs whitespace-nowrap transition"
               >
                 <Store className="w-3.5 h-3.5 text-[#F59E0B]" />
@@ -951,7 +983,7 @@ export default function HomePage() {
 
                 <button
                   onClick={() => setShowMyMarketModal(true)}
-                  title="我的市集與收藏"
+                  title="我的市集（修改遊戲ID/名稱與收藏）"
                   className="lg:hidden p-2 rounded-full bg-white border border-[#E6D8C3] text-[#6E6254] shrink-0"
                 >
                   <Store className="w-4 h-4 text-[#F59E0B]" />
@@ -1235,7 +1267,7 @@ export default function HomePage() {
             <div className="flex items-center gap-1.5 min-w-0 text-amber-900">
               <Crown className="w-4 h-4 text-amber-600 shrink-0" />
               <span className="truncate font-medium">
-                <strong>👑 VIP 島主特權：</strong>享首頁最前排置頂曝光、每日可發 5 篇、上架保留 7 天免重發！
+                <strong>👑 VIP 島主進階特權：</strong>享許願關鍵字即時雷達通知、貼文一鍵擦亮推頂、每日可發 15 篇！
               </span>
             </div>
             <button
@@ -1463,6 +1495,7 @@ export default function HomePage() {
           isAdmin={isAdmin}
           isBanned={isBanned}
           vipEnabled={vipEnabled}
+          dailyPostLimit={dailyPostLimit}
           myDisplayName={myProfile?.game_name || '島民玩家'}
           myGameId={myProfile?.game_id || ''}
           sponsorUrl={announcement.sponsor_url || ''}
@@ -1488,7 +1521,9 @@ export default function HomePage() {
           usersList={usersList}
           items={items}
           vipEnabled={vipEnabled}
+          dailyPostLimit={dailyPostLimit}
           onToggleVipSystem={handleToggleVipSystem}
+          onUpdateDailyPostLimit={handleUpdateDailyPostLimit}
           onClose={() => setShowAdminDashboard(false)}
           onRefreshData={fetchData}
         />

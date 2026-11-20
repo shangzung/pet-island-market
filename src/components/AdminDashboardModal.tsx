@@ -16,13 +16,16 @@ import {
   Check,
   BookOpenCheck,
   Crown,
+  SlidersHorizontal,
 } from 'lucide-react';
 
 interface AdminDashboardModalProps {
   usersList: any[];
   items: any[];
   vipEnabled: boolean;
+  dailyPostLimit: number;
   onToggleVipSystem: (nextEnabled: boolean) => Promise<void>;
+  onUpdateDailyPostLimit: (nextLimit: number) => Promise<void>;
   onClose: () => void;
   onRefreshData: () => void;
 }
@@ -31,7 +34,9 @@ export function AdminDashboardModal({
   usersList,
   items,
   vipEnabled,
+  dailyPostLimit,
   onToggleVipSystem,
+  onUpdateDailyPostLimit,
   onClose,
   onRefreshData,
 }: AdminDashboardModalProps) {
@@ -40,6 +45,8 @@ export function AdminDashboardModal({
   const [catalogItems, setCatalogItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [togglingVip, setTogglingVip] = useState(false);
+  const [limitInput, setLimitInput] = useState<number>(dailyPostLimit || 5);
+  const [savingLimit, setSavingLimit] = useState(false);
 
   const fetchAdminData = async () => {
     setLoading(true);
@@ -68,6 +75,15 @@ export function AdminDashboardModal({
     setTogglingVip(true);
     await onToggleVipSystem(!vipEnabled);
     setTogglingVip(false);
+  };
+
+  const handleSaveLimit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const val = Math.max(1, Math.min(50, Number(limitInput) || 5));
+    setSavingLimit(true);
+    await onUpdateDailyPostLimit(val);
+    setSavingLimit(false);
+    alert(`已將一般島民每日發文上限調整為 ${val} 篇！`);
   };
 
   const now = new Date();
@@ -193,49 +209,90 @@ export function AdminDashboardModal({
         </div>
 
         <div className="p-5 overflow-y-auto space-y-6">
-          {/* 👑 全站 VIP 制度總開關 */}
-          <div
-            className={`p-4 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
-              vipEnabled
-                ? 'bg-amber-50/80 border-amber-300'
-                : 'bg-[#FFFDF7] border-[#E6D8C3]'
-            }`}
-          >
-            <div className="space-y-0.5">
-              <div className="flex items-center gap-1.5 font-bold text-sm">
-                <Crown className={`w-4 h-4 ${vipEnabled ? 'text-amber-500' : 'text-[#8C7B6B]'}`} />
-                <span>全站 VIP 島主贊助制度</span>
-                <span
-                  className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                    vipEnabled
-                      ? 'bg-emerald-600 text-white'
-                      : 'bg-gray-200 text-gray-600'
-                  }`}
-                >
-                  {vipEnabled ? '目前開放中' : '目前已關閉'}
-                </span>
-              </div>
-              <p className="text-xs text-[#6E6254]">
-                關閉時會隱藏全站 VIP 入口、置頂標籤與皇冠徽章，所有玩家統一每日 1 篇 / 保留 48h。
-              </p>
-            </div>
-
-            <button
-              type="button"
-              disabled={togglingVip}
-              onClick={handleSwitchVip}
-              className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap shrink-0 transition disabled:opacity-50 ${
+          {/* 系統營運開關與參數設定區 */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {/* 👑 全站 VIP 制度總開關 */}
+            <div
+              className={`p-4 rounded-2xl border flex flex-col justify-between gap-3 ${
                 vipEnabled
-                  ? 'bg-gray-700 hover:bg-gray-800 text-white'
-                  : 'bg-amber-500 hover:bg-amber-600 text-white shadow-xs'
+                  ? 'bg-amber-50/80 border-amber-300'
+                  : 'bg-[#FFFDF7] border-[#E6D8C3]'
               }`}
             >
-              {togglingVip
-                ? '切換中...'
-                : vipEnabled
-                ? '關閉 VIP 功能'
-                : '開啟 VIP 功能'}
-            </button>
+              <div className="space-y-1">
+                <div className="flex items-center gap-1.5 font-bold text-sm">
+                  <Crown className={`w-4 h-4 ${vipEnabled ? 'text-amber-500' : 'text-[#8C7B6B]'}`} />
+                  <span>全站 VIP 制度開關</span>
+                  <span
+                    className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                      vipEnabled
+                        ? 'bg-emerald-600 text-white'
+                        : 'bg-gray-200 text-gray-600'
+                    }`}
+                  >
+                    {vipEnabled ? '開放中' : '已關閉'}
+                  </span>
+                </div>
+                <p className="text-xs text-[#6E6254]">
+                  關閉時隱藏全站 VIP 入口與徽章；一般玩家已永久享有 7 天貼文保留。
+                </p>
+              </div>
+
+              <button
+                type="button"
+                disabled={togglingVip}
+                onClick={handleSwitchVip}
+                className={`w-full py-2 rounded-xl text-xs font-bold transition disabled:opacity-50 ${
+                  vipEnabled
+                    ? 'bg-gray-700 hover:bg-gray-800 text-white'
+                    : 'bg-amber-500 hover:bg-amber-600 text-white shadow-xs'
+                }`}
+              >
+                {togglingVip
+                  ? '切換中...'
+                  : vipEnabled
+                  ? '關閉 VIP 功能'
+                  : '開啟 VIP 功能'}
+              </button>
+            </div>
+
+            {/* 📝 一般島民每日發文上限設定 */}
+            <form
+              onSubmit={handleSaveLimit}
+              className="p-4 rounded-2xl bg-[#FFFDF7] border border-[#E6D8C3] flex flex-col justify-between gap-3"
+            >
+              <div className="space-y-1">
+                <div className="flex items-center gap-1.5 font-bold text-sm">
+                  <SlidersHorizontal className="w-4 h-4 text-[#F59E0B]" />
+                  <span>一般島民每日發文上限</span>
+                  <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-bold">
+                    目前：{dailyPostLimit} 篇 / 24h
+                  </span>
+                </div>
+                <p className="text-xs text-[#6E6254]">
+                  可隨時調整每位一般玩家 24 小時內可發布的貼文數量（預設 5 篇）。
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min={1}
+                  max={50}
+                  value={limitInput}
+                  onChange={(e) => setLimitInput(Number(e.target.value))}
+                  className="w-24 px-3 py-1.5 rounded-xl bg-white border border-[#E6D8C3] text-xs font-bold text-center"
+                />
+                <span className="text-xs text-[#6E6254]">篇 / 日</span>
+                <button
+                  type="submit"
+                  disabled={savingLimit}
+                  className="ml-auto px-4 py-1.5 rounded-xl bg-[#F59E0B] hover:bg-[#D97706] text-white text-xs font-bold transition disabled:opacity-50"
+                >
+                  {savingLimit ? '儲存中...' : '套用上限'}
+                </button>
+              </div>
+            </form>
           </div>
 
           {/* 數據卡片 4 宮格 */}
@@ -268,7 +325,7 @@ export function AdminDashboardModal({
 
             <div className="p-4 rounded-2xl bg-[#FFFDF7] border border-[#F3E8D2]">
               <div className="flex items-center gap-1.5 text-xs text-[#8C7B6B] font-bold mb-1">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> 48h 內成交率
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> 成交率統計
               </div>
               <div className="text-2xl font-bold text-emerald-700">{completionRate}%</div>
               <div className="text-[11px] text-[#8C7B6B] mt-1">

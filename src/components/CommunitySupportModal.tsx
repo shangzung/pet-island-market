@@ -22,6 +22,7 @@ interface CommunitySupportModalProps {
   isAdmin: boolean;
   isBanned: boolean;
   vipEnabled: boolean;
+  dailyPostLimit?: number;
   myDisplayName: string;
   myGameId: string;
   sponsorUrl: string;
@@ -37,6 +38,7 @@ export function CommunitySupportModal({
   isAdmin,
   isBanned,
   vipEnabled,
+  dailyPostLimit = 5,
   myDisplayName,
   myGameId,
   sponsorUrl,
@@ -199,36 +201,36 @@ export function CommunitySupportModal({
           <div className="p-4 sm:p-6 flex-1 overflow-y-auto space-y-4">
             <div className="text-center space-y-1">
               <div className="inline-flex items-center gap-1 px-3 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[11px] font-bold">
-                <Flame className="w-3.5 h-3.5 text-orange-500 fill-orange-500" /> 急出 SR / 課長清倉必備神器
+                <Flame className="w-3.5 h-3.5 text-orange-500 fill-orange-500" /> 搶先收購 SR / 自動盯盤神器
               </div>
-              <h3 className="text-lg sm:text-xl font-bold">升級「👑 VIP 島主」加值特權</h3>
+              <h3 className="text-lg sm:text-xl font-bold">升級「👑 VIP 島主」進階特權</h3>
               <p className="text-xs text-[#8C7B6B]">
-                小額贊助支持伺服器穩定營運，立即解鎖全站最醒目置頂曝光與 5 倍發文額度！
+                基礎發文與 7 天保留已全站免費開放！升級 VIP 再享智能搶貨雷達與無限擦亮推頂！
               </p>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 text-xs">
               <div className="p-4 rounded-2xl bg-[#FFFDF7] border border-[#F3E8D2] space-y-2">
-                <div className="font-bold text-sm text-[#6E6254]">🌱 一般島民（永久免費）</div>
+                <div className="font-bold text-sm text-[#6E6254]">🌱 一般島民（全站免費升級）</div>
                 <ul className="space-y-1.5 text-[#6E6254]">
-                  <li>• 每 24 小時可發布 <strong>1 篇</strong> 貼文</li>
-                  <li>• 貼文保留 <strong>48 小時</strong>（到期需重發）</li>
-                  <li>• 一般列表排序顯示</li>
+                  <li>• 每 24 小時可發布 <strong>{dailyPostLimit} 篇</strong> 貼文</li>
+                  <li>• 貼文免費保留 <strong>7 天（168 小時）</strong></li>
                   <li>• 完整 1v1 私訊、圖鑑套用與收藏</li>
+                  <li>• 依發布時間排序顯示</li>
                 </ul>
               </div>
 
               <div className="relative p-4 rounded-2xl bg-gradient-to-br from-[#FEF3C7] via-[#FFFBEB] to-white border-2 border-[#F59E0B] shadow-md shadow-amber-100 space-y-2">
                 <span className="absolute -top-2.5 right-3 px-2.5 py-0.5 rounded-full bg-gradient-to-r from-orange-500 to-amber-500 text-white text-[10px] font-bold shadow-2xs">
-                  🔥 最多大戶選擇
+                  🔥 收藏家首選
                 </span>
                 <div className="font-bold text-sm text-[#B45309] flex items-center gap-1">
                   <Crown className="w-4 h-4 text-[#F59E0B]" /> 👑 VIP 島主（30 天特權）
                 </div>
                 <ul className="space-y-1.5 font-medium text-[#4A4238]">
-                  <li>• <strong>首頁最前排「✨ VIP 置頂曝光」</strong>（成交快 3 倍）</li>
-                  <li>• 每日發文上限提升至 <strong>5 篇</strong>（抽卡清倉無壓力）</li>
-                  <li>• 貼文保留延長至 <strong>7 天（168 小時）</strong>免重發</li>
+                  <li>• <strong>🔔 許願關鍵字即時雷達</strong>（有人上架秒通知）</li>
+                  <li>• <strong>🚀 貼文一鍵擦亮推頂</strong>（免重發直接回首頁前排）</li>
+                  <li>• 每日發文上限提升至 <strong>15 篇</strong>（抽卡清倉無壓力）</li>
                   <li>• 全站專屬 <strong>👑 VIP 皇冠徽章</strong>＋流光金卡框</li>
                 </ul>
               </div>
