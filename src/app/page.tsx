@@ -9,6 +9,7 @@ import { DirectChatModal } from '@/components/DirectChatModal';
 import { AdminDashboardModal } from '@/components/AdminDashboardModal';
 import { CommunitySupportModal } from '@/components/CommunitySupportModal';
 import { ShareItemModal } from '@/components/ShareItemModal';
+import { IslandHouseModal } from '@/components/IslandHouseModal';
 import { checkSensitiveContent } from '@/lib/contentFilter';
 import { removeUnusedStorageImages } from '@/lib/storageCleanup';
 import {
@@ -47,6 +48,9 @@ import {
   Crown,
   ArrowUpDown,
   Share2,
+  Home,
+  Droplets,
+  Upload,
 } from 'lucide-react';
 
 const CATEGORIES = [
@@ -60,7 +64,7 @@ const CATEGORIES = [
 const RARITIES = ['全部', 'SR', 'R', 'N'];
 
 const DEFAULT_ANNOUNCEMENT =
-  '🎉 慶祝新版本上線！全站島民免費升級：每日發文上限開放至 5 篇、貼文保留延長至 7 天（168小時）！若「遊戲 ID」與「遊戲名稱」先前填反，可點擊上方「我的市集」修改修正；交換前請務必核對「遊戲 ID」與「👍 好評數」，祝大家歐氣滿滿！';
+  '🎉 慶祝新版本上線！全站島民免費升級：每日發文上限開放至 5 篇、貼文保留延長至 7 天（168小時）！若「遊戲 ID」與「遊戲名稱」先前填反，可點擊上方「我的市集」修改修正；點擊玩家名字還能參觀個人小屋幫他澆水喔！';
 
 export default function HomePage() {
   const supabase = createClient();
@@ -72,6 +76,9 @@ export default function HomePage() {
     game_name?: string;
     good_reviews?: number;
     vip_expires_at?: string | null;
+    bio?: string;
+    cover_image?: string;
+    water_count?: number;
   } | null>(null);
   const [needBindProfile, setNeedBindProfile] = useState(false);
 
@@ -114,21 +121,24 @@ export default function HomePage() {
 
   // 彈窗狀態
   const [activeItem, setActiveItem] = useState<any | null>(null);
+  const [houseOwner, setHouseOwner] = useState<any | null>(null);
   const [shareTargetItem, setShareTargetItem] = useState<any | null>(null);
   const [isShareJustPublished, setIsShareJustPublished] = useState(false);
   const [zoomedImage, setZoomedImage] = useState<string | null>(null);
   const [showUsersModal, setShowUsersModal] = useState(false);
   const [showAdminDashboard, setShowAdminDashboard] = useState(false);
   const [showMyMarketModal, setShowMyMarketModal] = useState(false);
-  const [myMarketTab, setMyMarketTab] = useState<'my_items' | 'favorites'>('my_items');
+  const [myMarketTab, setMyMarketTab] = useState<'my_items' | 'favorites' | 'house_edit'>('my_items');
 
   // 功能許願與贊助 VIP 彈窗
   const [showSupportModal, setShowSupportModal] = useState(false);
   const [supportModalTab, setSupportModalTab] = useState<'feedback' | 'vip'>('feedback');
 
-  // 我的市集修改遊戲 ID 與名稱狀態
+  // 我的市集：修改遊戲 ID、名稱與小屋佈置狀態
   const [editGameId, setEditGameId] = useState('');
   const [editGameName, setEditGameName] = useState('');
+  const [editBio, setEditBio] = useState('');
+  const [uploadingCover, setUploadingCover] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
 
   // 複製 ID 與檢舉狀態
@@ -162,21 +172,21 @@ export default function HomePage() {
     return new Date(u.vip_expires_at).getTime() > Date.now();
   };
 
-  const syncUrlItemParam = (itemId: string | null) => {
+  const syncUrlParams = (paramsToSet: { item?: string | null; island?: string | null }) => {
     if (typeof window === 'undefined') return;
     const url = new URL(window.location.href);
-    if (itemId) {
-      url.searchParams.set('item', itemId);
-    } else {
-      url.searchParams.delete('item');
-      url.searchParams.delete('just_published');
-    }
+    url.searchParams.delete('item');
+    url.searchParams.delete('island');
+    url.searchParams.delete('just_published');
+    if (paramsToSet.item) url.searchParams.set('item', paramsToSet.item);
+    if (paramsToSet.island) url.searchParams.set('island', paramsToSet.island);
     window.history.replaceState({}, '', url.toString());
   };
 
   const openItemModal = async (item: any) => {
+    setHouseOwner(null);
     setActiveItem(item);
-    syncUrlItemParam(item.id);
+    syncUrlParams({ item: item.id });
     setShowReportBox(false);
     setReportReason('');
     setComments([]);
@@ -190,7 +200,19 @@ export default function HomePage() {
 
   const closeItemModal = () => {
     setActiveItem(null);
-    syncUrlItemParam(null);
+    syncUrlParams({});
+  };
+
+  const openHouseModal = (targetUser: any) => {
+    if (!targetUser) return;
+    setActiveItem(null);
+    setHouseOwner(targetUser);
+    syncUrlParams({ island: targetUser.game_id || null });
+  };
+
+  const closeHouseModal = () => {
+    setHouseOwner(null);
+    syncUrlParams({});
   };
 
   const fetchData = async () => {
@@ -235,7 +257,7 @@ export default function HomePage() {
     const { data: usersData } = await supabase
       .from('users')
       .select(
-        'id, nickname, game_id, game_name, is_admin, is_banned, vip_expires_at, good_reviews, created_at'
+        'id, nickname, game_id, game_name, is_admin, is_banned, vip_expires_at, good_reviews, bio, cover_image, water_count, created_at'
       )
       .order('created_at', { ascending: false });
 
@@ -255,9 +277,13 @@ export default function HomePage() {
             game_name: u.game_name,
             good_reviews: u.good_reviews || 0,
             vip_expires_at: u.vip_expires_at,
+            bio: u.bio || '',
+            cover_image: u.cover_image || '',
+            water_count: u.water_count || 0,
           });
           setEditGameId(u.game_id || '');
           setEditGameName(u.game_name || '');
+          setEditBio(u.bio || '');
           if (!u.game_id || !u.game_name) {
             setNeedBindProfile(true);
           }
@@ -285,13 +311,21 @@ export default function HomePage() {
       });
       setItems(validItems);
 
-      // 偵測網址參數 ?item=xxx（外部社群直達連結）或剛發布完成 ?just_published=1
+      // 偵測網址參數：?item=xxx（直達貼文）、?island=遊戲ID（直達個人小屋）、?just_published=1（剛發布完成）
       if (typeof window !== 'undefined') {
         const params = new URLSearchParams(window.location.search);
         const sharedItemId = params.get('item');
+        const islandGameId = params.get('island');
         const justPublished = params.get('just_published') === '1';
 
-        if (sharedItemId) {
+        if (islandGameId && usersData) {
+          const targetOwner = usersData.find(
+            (u) => u.game_id && u.game_id.toLowerCase() === islandGameId.toLowerCase()
+          );
+          if (targetOwner) {
+            setHouseOwner(targetOwner);
+          }
+        } else if (sharedItemId) {
           const targetItem = validItems.find((i) => i.id === sharedItemId);
           if (targetItem) {
             if (targetItem.post_type === 'wish') {
@@ -300,7 +334,7 @@ export default function HomePage() {
             if (justPublished) {
               setIsShareJustPublished(true);
               setShareTargetItem(targetItem);
-              syncUrlItemParam(null);
+              syncUrlParams({});
             } else {
               openItemModal(targetItem);
             }
@@ -310,7 +344,7 @@ export default function HomePage() {
           if (myLatestItem) {
             setIsShareJustPublished(true);
             setShareTargetItem(myLatestItem);
-            syncUrlItemParam(null);
+            syncUrlParams({});
           }
         }
       }
@@ -693,16 +727,81 @@ export default function HomePage() {
     setSubmittingReport(false);
   };
 
+  // 壓縮並上傳小屋展示照（自動刪除舊圖省空間）
+  const compressCoverImage = (file: File): Promise<Blob> => {
+    return new Promise((resolve) => {
+      const img = new window.Image();
+      img.src = URL.createObjectURL(file);
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const maxWidth = 1000;
+        const scale = img.width > maxWidth ? maxWidth / img.width : 1;
+        canvas.width = img.width * scale;
+        canvas.height = img.height * scale;
+        const ctx = canvas.getContext('2d');
+        ctx?.drawImage(img, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob((blob) => resolve(blob || file), 'image/webp', 0.8);
+      };
+    });
+  };
+
+  const handleUploadHouseCover = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !user) return;
+
+    setUploadingCover(true);
+    try {
+      const compressedBlob = await compressCoverImage(file);
+      const fileName = `${user.id}/house-${Date.now()}.webp`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('item-images')
+        .upload(fileName, compressedBlob, { contentType: 'image/webp' });
+
+      if (uploadError) throw uploadError;
+
+      const { data: publicUrlData } = supabase.storage
+        .from('item-images')
+        .getPublicUrl(fileName);
+
+      const newCoverUrl = publicUrlData.publicUrl;
+      const oldCoverUrl = myProfile?.cover_image;
+
+      const { error: updateError } = await supabase
+        .from('users')
+        .update({ cover_image: newCoverUrl })
+        .eq('id', user.id);
+
+      if (updateError) throw updateError;
+
+      if (oldCoverUrl) {
+        await removeUnusedStorageImages(supabase, [oldCoverUrl], false);
+      }
+
+      setMyProfile((prev) => (prev ? { ...prev, cover_image: newCoverUrl } : null));
+      setUsersMap((prev) => ({
+        ...prev,
+        [user.id]: { ...prev[user.id], cover_image: newCoverUrl },
+      }));
+      alert('小屋展示照更新成功！');
+    } catch (err: any) {
+      alert('上傳展示照失敗：' + (err.message || '請稍後再試'));
+    } finally {
+      setUploadingCover(false);
+    }
+  };
+
   const handleUpdateMyProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user || !editGameId.trim() || !editGameName.trim()) return;
 
     const cleanId = editGameId.trim();
     const cleanName = editGameName.trim();
+    const cleanBio = editBio.trim();
 
-    const filterResult = checkSensitiveContent(cleanName);
+    const filterResult = checkSensitiveContent(`${cleanName} ${cleanBio}`);
     if (!filterResult.isClean) {
-      alert(`遊戲名稱包含禁止字詞「${filterResult.matchedWord}」，請重新輸入！`);
+      alert(`內容包含禁止字詞「${filterResult.matchedWord}」，請重新輸入！`);
       return;
     }
 
@@ -723,12 +822,17 @@ export default function HomePage() {
 
     const { error } = await supabase
       .from('users')
-      .update({ game_id: cleanId, game_name: cleanName, nickname: cleanName })
+      .update({
+        game_id: cleanId,
+        game_name: cleanName,
+        nickname: cleanName,
+        bio: cleanBio,
+      })
       .eq('id', user.id);
 
     if (!error) {
       setMyProfile((prev) =>
-        prev ? { ...prev, game_id: cleanId, game_name: cleanName } : null
+        prev ? { ...prev, game_id: cleanId, game_name: cleanName, bio: cleanBio } : null
       );
       setUsersMap((prev) => ({
         ...prev,
@@ -737,9 +841,10 @@ export default function HomePage() {
           game_id: cleanId,
           game_name: cleanName,
           nickname: cleanName,
+          bio: cleanBio,
         },
       }));
-      alert('遊戲名片更新成功！');
+      alert('名片與小屋資料儲存成功！');
     } else {
       alert('更新失敗：' + error.message);
     }
@@ -1003,7 +1108,7 @@ export default function HomePage() {
             {user && myProfile?.game_name && (
               <button
                 onClick={() => setShowMyMarketModal(true)}
-                title="點擊打開「我的市集」修改遊戲 ID / 名稱與查看收藏"
+                title="點擊打開「我的市集與小屋佈置」"
                 className="hidden lg:inline-flex items-center gap-1.5 ml-1 px-3 py-1.5 rounded-full bg-white border border-[#E6D8C3] hover:border-[#F59E0B] text-xs whitespace-nowrap transition"
               >
                 <Store className="w-3.5 h-3.5 text-[#F59E0B]" />
@@ -1066,7 +1171,7 @@ export default function HomePage() {
 
                 <button
                   onClick={() => setShowMyMarketModal(true)}
-                  title="我的市集（修改遊戲ID/名稱與收藏）"
+                  title="我的市集與小屋佈置"
                   className="lg:hidden p-2 rounded-full bg-white border border-[#E6D8C3] text-[#6E6254] shrink-0"
                 >
                   <Store className="w-4 h-4 text-[#F59E0B]" />
@@ -1520,19 +1625,29 @@ export default function HomePage() {
                       </div>
                     </div>
 
-                    {/* 底部賣家列 */}
+                    {/* 底部賣家列（點擊賣家名字可直接進入他的個人小屋） */}
                     <div className="pt-2 border-t border-[#F7EFE0] flex items-center justify-between gap-1 text-[11px]">
-                      <div className="flex items-center gap-1 min-w-0">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (sellerInfo) openHouseModal(sellerInfo);
+                        }}
+                        title="點擊參觀他的個人小屋與全部換物清單"
+                        className="flex items-center gap-1 min-w-0 hover:text-[#D97706] transition text-left"
+                      >
                         {sellerIsVip && (
                           <span className="px-1 py-0.2 rounded bg-amber-500 text-white text-[9px] font-bold shrink-0">
                             👑VIP
                           </span>
                         )}
-                        <span className="font-bold text-[#4A4238] truncate">{sellerName}</span>
+                        <span className="font-bold underline decoration-[#E6D8C3] underline-offset-2 truncate">
+                          {sellerName}
+                        </span>
                         <span className="text-[10px] text-emerald-700 font-bold shrink-0">
                           👍{sellerInfo?.good_reviews || 0}
                         </span>
-                      </div>
+                      </button>
 
                       <span className="inline-flex items-center gap-0.5 text-[#D97706] font-bold whitespace-nowrap shrink-0">
                         <MessageCircle className="w-3 h-3" /> 詳情
@@ -1612,7 +1727,7 @@ export default function HomePage() {
         />
       )}
 
-      {/* 我的市集（個人中心 + 愛心收藏彈窗） */}
+      {/* 我的市集（個人名片 + 小屋裝潢 + 貼文管理 + 愛心收藏彈窗） */}
       {user && showMyMarketModal && (
         <div
           onClick={() => setShowMyMarketModal(false)}
@@ -1622,89 +1737,68 @@ export default function HomePage() {
             onClick={(e) => e.stopPropagation()}
             className="bg-white rounded-3xl max-w-xl w-full max-h-[90dvh] flex flex-col border border-[#F3E8D2] shadow-2xl overflow-hidden"
           >
-            <div className="px-5 py-3.5 bg-[#FFFDF7] border-b border-[#F3E8D2] flex items-center justify-between shrink-0">
+            <div className="px-5 py-3.5 bg-[#FFFDF7] border-b border-[#F3E8D2] flex items-center justify-between gap-2 shrink-0">
               <div className="flex items-center gap-2">
                 <Store className="w-5 h-5 text-[#F59E0B]" />
-                <h2 className="font-bold text-base sm:text-lg">我的市集與追蹤收藏</h2>
+                <h2 className="font-bold text-base sm:text-lg">我的市集與個人小屋</h2>
               </div>
-              <button
-                onClick={() => setShowMyMarketModal(false)}
-                className="p-1.5 rounded-full bg-white border border-[#E6D8C3] text-[#8C7B6B]"
-              >
-                <X className="w-5 h-5" />
-              </button>
+              <div className="flex items-center gap-1.5">
+                {usersMap[user.id] && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowMyMarketModal(false);
+                      openHouseModal(usersMap[user.id]);
+                    }}
+                    className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-[#FEF3C7] text-[#B45309] text-xs font-bold hover:bg-[#FDE68A] transition"
+                  >
+                    <Home className="w-3.5 h-3.5" /> 預覽我的小屋
+                  </button>
+                )}
+                <button
+                  onClick={() => setShowMyMarketModal(false)}
+                  className="p-1.5 rounded-full bg-white border border-[#E6D8C3] text-[#8C7B6B]"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
             </div>
 
             <div className="p-4 sm:p-5 overflow-y-auto space-y-4">
-              <div className="bg-[#FFFDF7] border border-[#F3E8D2] rounded-2xl p-4">
-                <div className="flex items-center justify-between flex-wrap gap-2 text-xs text-[#8C7B6B] mb-3">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span>
-                      目前遊戲 ID：<strong className="text-[#4A4238] font-mono">{myProfile?.game_id}</strong>
-                    </span>
-                    {vipEnabled &&
-                      (isUserVip(myProfile) ? (
-                        <span className="px-2 py-0.5 rounded-full bg-amber-500 text-white text-[10px] font-bold">
-                          👑 VIP 到期：{new Date(myProfile!.vip_expires_at!).toLocaleDateString('zh-TW')}
-                        </span>
-                      ) : (
-                        <button
-                          onClick={() => {
-                            setShowMyMarketModal(false);
-                            setSupportModalTab('vip');
-                            setShowSupportModal(true);
-                          }}
-                          className="text-[11px] text-[#D97706] underline font-bold"
-                        >
-                          升級 👑 VIP
-                        </button>
-                      ))}
-                  </div>
-                  <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold">
-                    👍 累計好評：{myProfile?.good_reviews || 0} 次
+              {/* 個人統計狀態列 */}
+              <div className="flex items-center justify-between flex-wrap gap-2 text-xs bg-[#FFFDF7] border border-[#F3E8D2] rounded-2xl px-4 py-2.5">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-[#8C7B6B]">
+                    ID：<strong className="text-[#4A4238] font-mono">{myProfile?.game_id}</strong>
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold">
+                    👍 好評 {myProfile?.good_reviews || 0}
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full bg-sky-50 text-sky-700 border border-sky-200 font-bold inline-flex items-center gap-1">
+                    <Droplets className="w-3 h-3" /> 小屋人氣 {myProfile?.water_count || 0}
                   </span>
                 </div>
-
-                <form onSubmit={handleUpdateMyProfile} className="space-y-2.5">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    <div>
-                      <label className="block text-[11px] font-bold text-[#8C7B6B] mb-1">
-                        遊戲 ID（英數字帳號 ID，供一鍵複製）
-                      </label>
-                      <input
-                        type="text"
-                        value={editGameId}
-                        onChange={(e) => setEditGameId(e.target.value)}
-                        placeholder="例：rraknam9"
-                        className="w-full px-3.5 py-2 rounded-xl bg-white border border-[#E6D8C3] text-xs font-mono focus:outline-none focus:border-[#F59E0B]"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-bold text-[#8C7B6B] mb-1">
-                        遊戲名稱（角色顯示暱稱）
-                      </label>
-                      <input
-                        type="text"
-                        value={editGameName}
-                        onChange={(e) => setEditGameName(e.target.value)}
-                        placeholder="例：花無缺"
-                        className="w-full px-3.5 py-2 rounded-xl bg-white border border-[#E6D8C3] text-xs focus:outline-none focus:border-[#F59E0B]"
-                      />
-                    </div>
-                  </div>
-                  <div className="flex justify-end">
+                {vipEnabled &&
+                  (isUserVip(myProfile) ? (
+                    <span className="px-2 py-0.5 rounded-full bg-amber-500 text-white text-[10px] font-bold">
+                      👑 VIP 到期：{new Date(myProfile!.vip_expires_at!).toLocaleDateString('zh-TW')}
+                    </span>
+                  ) : (
                     <button
-                      type="submit"
-                      disabled={savingProfile || !editGameId.trim() || !editGameName.trim()}
-                      className="px-4 py-2 rounded-xl bg-[#F59E0B] hover:bg-[#D97706] text-white text-xs font-bold whitespace-nowrap shrink-0 disabled:opacity-50"
+                      onClick={() => {
+                        setShowMyMarketModal(false);
+                        setSupportModalTab('vip');
+                        setShowSupportModal(true);
+                      }}
+                      className="text-[11px] text-[#D97706] underline font-bold"
                     >
-                      {savingProfile ? '儲存中...' : '儲存名片資料'}
+                      升級 👑 VIP
                     </button>
-                  </div>
-                </form>
+                  ))}
               </div>
 
-              <div className="grid grid-cols-2 gap-2 p-1 rounded-2xl bg-[#FFFDF7] border border-[#E6D8C3]">
+              {/* 3 分頁切換：我的上架 / 愛心收藏 / 小屋裝潢與名片 */}
+              <div className="grid grid-cols-3 gap-1.5 p-1 rounded-2xl bg-[#FFFDF7] border border-[#E6D8C3]">
                 <button
                   onClick={() => setMyMarketTab('my_items')}
                   className={`py-2 rounded-xl text-xs font-bold transition ${
@@ -1713,7 +1807,7 @@ export default function HomePage() {
                       : 'text-[#6E6254]'
                   }`}
                 >
-                  📦 我上架的貼文 ({myItems.length})
+                  📦 我的貼文 ({myItems.length})
                 </button>
                 <button
                   onClick={() => setMyMarketTab('favorites')}
@@ -1723,11 +1817,106 @@ export default function HomePage() {
                       : 'text-[#6E6254]'
                   }`}
                 >
-                  ❤️ 我的愛心收藏 ({myFavoriteItems.length})
+                  ❤️ 收藏 ({myFavoriteItems.length})
+                </button>
+                <button
+                  onClick={() => setMyMarketTab('house_edit')}
+                  className={`py-2 rounded-xl text-xs font-bold transition ${
+                    myMarketTab === 'house_edit'
+                      ? 'bg-[#2C2520] text-white'
+                      : 'text-[#6E6254]'
+                  }`}
+                >
+                  🏠 小屋與名片
                 </button>
               </div>
 
-              {myMarketTab === 'my_items' ? (
+              {myMarketTab === 'house_edit' ? (
+                <div className="bg-[#FFFDF7] border border-[#F3E8D2] rounded-2xl p-4 space-y-4">
+                  {/* 小屋展示照上傳 */}
+                  <div>
+                    <label className="block text-xs font-bold text-[#4A4238] mb-1.5">
+                      🖼️ 小屋美照展示牆（可放 HOM 穿搭或島嶼佈置截圖，自動轉 WebP）
+                    </label>
+                    <div className="relative h-36 rounded-2xl bg-white border border-[#E6D8C3] overflow-hidden flex items-center justify-center">
+                      {myProfile?.cover_image ? (
+                        <img
+                          src={myProfile.cover_image}
+                          alt="我的小屋封面"
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <span className="text-xs text-[#A39585]">尚未上傳小屋展示照</span>
+                      )}
+                      <label className="absolute bottom-2.5 right-2.5 inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-[#2C2520]/85 hover:bg-[#2C2520] text-white text-xs font-bold cursor-pointer shadow-sm transition">
+                        <Upload className="w-3.5 h-3.5" />
+                        {uploadingCover ? '壓縮上傳中...' : '更換展示照'}
+                        <input
+                          type="file"
+                          accept="image/*"
+                          disabled={uploadingCover}
+                          onChange={handleUploadHouseCover}
+                          className="hidden"
+                        />
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* 遊戲 ID、名稱與小屋心情簡介表單 */}
+                  <form onSubmit={handleUpdateMyProfile} className="space-y-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      <div>
+                        <label className="block text-[11px] font-bold text-[#8C7B6B] mb-1">
+                          遊戲 ID（英數字帳號 ID，供一鍵複製）
+                        </label>
+                        <input
+                          type="text"
+                          value={editGameId}
+                          onChange={(e) => setEditGameId(e.target.value)}
+                          placeholder="例：rraknam9"
+                          className="w-full px-3.5 py-2 rounded-xl bg-white border border-[#E6D8C3] text-xs font-mono focus:outline-none focus:border-[#F59E0B]"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-[#8C7B6B] mb-1">
+                          遊戲名稱（角色顯示暱稱）
+                        </label>
+                        <input
+                          type="text"
+                          value={editGameName}
+                          onChange={(e) => setEditGameName(e.target.value)}
+                          placeholder="例：花無缺"
+                          className="w-full px-3.5 py-2 rounded-xl bg-white border border-[#E6D8C3] text-xs focus:outline-none focus:border-[#F59E0B]"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-[#8C7B6B] mb-1">
+                        小屋心情簽名 / 換物習慣說明
+                      </label>
+                      <textarea
+                        rows={2}
+                        maxLength={120}
+                        value={editBio}
+                        onChange={(e) => setEditBio(e.target.value)}
+                        placeholder="例：每天晚上都在線！歡迎來小屋澆水採果實，有許願清單裡的道具都歡迎私訊～"
+                        className="w-full px-3.5 py-2 rounded-xl bg-white border border-[#E6D8C3] text-xs focus:outline-none focus:border-[#F59E0B]"
+                      />
+                    </div>
+
+                    <div className="flex justify-end">
+                      <button
+                        type="submit"
+                        disabled={savingProfile || !editGameId.trim() || !editGameName.trim()}
+                        className="px-4 py-2 rounded-xl bg-[#F59E0B] hover:bg-[#D97706] text-white text-xs font-bold whitespace-nowrap shrink-0 disabled:opacity-50"
+                      >
+                        {savingProfile ? '儲存中...' : '儲存小屋與名片資料'}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              ) : myMarketTab === 'my_items' ? (
                 myItems.length === 0 ? (
                   <p className="text-xs text-[#A39585] text-center py-6 bg-[#FFFDF7] rounded-2xl border border-[#F3E8D2]">
                     你目前還沒有上架中的貼文喔！
@@ -1976,9 +2165,18 @@ export default function HomePage() {
                       👑 VIP 島主
                     </span>
                   )}
-                  <span className="text-xs font-bold text-[#4A4238] truncate">
-                    {getDisplayName(activeItem.user_id)}
-                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const owner = usersMap[activeItem.user_id];
+                      if (owner) openHouseModal(owner);
+                    }}
+                    title="點擊參觀他的個人小屋"
+                    className="inline-flex items-center gap-1 text-xs font-bold text-[#4A4238] hover:text-[#D97706] underline decoration-[#E6D8C3] underline-offset-2 truncate transition"
+                  >
+                    <Home className="w-3 h-3 text-[#F59E0B] shrink-0" />
+                    <span>{getDisplayName(activeItem.user_id)}</span>
+                  </button>
                   <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold flex items-center gap-0.5 whitespace-nowrap">
                     <ThumbsUp className="w-3 h-3" /> {usersMap[activeItem.user_id]?.good_reviews || 0}
                   </span>
@@ -2239,6 +2437,33 @@ export default function HomePage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* 個人小屋主頁視窗 */}
+      {houseOwner && (
+        <IslandHouseModal
+          owner={usersMap[houseOwner.id] || houseOwner}
+          ownerItems={items.filter((i) => i.user_id === houseOwner.id)}
+          currentUserId={user?.id}
+          isBanned={isBanned}
+          vipEnabled={vipEnabled}
+          onClose={closeHouseModal}
+          onSelectItem={(item) => openItemModal(item)}
+          onOpenChat={(targetUserId) => {
+            setChatTargetUserId(targetUserId);
+            setChatContextItem(null);
+            setShowChatModal(true);
+          }}
+          onWaterUpdated={(targetUserId, newCount) => {
+            setUsersMap((prev) => ({
+              ...prev,
+              [targetUserId]: { ...prev[targetUserId], water_count: newCount },
+            }));
+            if (user && user.id === targetUserId) {
+              setMyProfile((prev) => (prev ? { ...prev, water_count: newCount } : null));
+            }
+          }}
+        />
       )}
 
       {/* 全平台一鍵分享彈窗 */}
