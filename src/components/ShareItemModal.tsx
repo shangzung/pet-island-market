@@ -11,6 +11,9 @@ import {
   Sparkles,
 } from 'lucide-react';
 
+// 巴哈姆特《寵物島》哈啦板專屬板號
+const BAHAMUT_BSN = '71315';
+
 interface ShareItemModalProps {
   item: {
     id: string;
@@ -97,7 +100,11 @@ export function ShareItemModal({
     navigator.clipboard.writeText(shareMessage);
     setCopiedType('text');
     setTimeout(() => setCopiedType(null), 2500);
-    window.open('https://forum.gamer.com.tw/', '_blank', 'noopener,noreferrer');
+    window.open(
+      `https://forum.gamer.com.tw/B.php?bsn=${BAHAMUT_BSN}`,
+      '_blank',
+      'noopener,noreferrer'
+    );
   };
 
   return (
@@ -179,7 +186,7 @@ export function ShareItemModal({
             type="button"
             onClick={handleBahamutShare}
             className="py-2.5 px-2 rounded-xl bg-[#11AAC1]/10 hover:bg-[#11AAC1]/20 text-[#0D8395] border border-[#11AAC1]/30 flex items-center justify-center gap-1 transition"
-            title="自動複製招募文案並開啟巴哈姆特"
+            title="自動複製招募文案並前往巴哈姆特寵物島哈啦區"
           >
             <span>巴哈姆特</span>
             <ExternalLink className="w-3 h-3" />
