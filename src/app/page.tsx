@@ -51,6 +51,7 @@ import {
   Home,
   Droplets,
   Upload,
+  Eye,
 } from 'lucide-react';
 
 const CATEGORIES = [
@@ -100,19 +101,21 @@ export default function HomePage() {
   // 成交快報輪播索引
   const [tickerIndex, setTickerIndex] = useState(0);
 
-  // 全站公告、贊助連結、VIP 系統總開關與每日發文上限
+  // 全站公告、贊助連結、VIP 系統總開關、每日發文上限與全站瀏覽次數
   const [announcement, setAnnouncement] = useState<{
     content: string;
     is_active: boolean;
     sponsor_url?: string;
     vip_enabled?: boolean;
     daily_post_limit?: number;
+    total_views?: number;
   }>({
     content: DEFAULT_ANNOUNCEMENT,
     is_active: true,
     sponsor_url: '',
     vip_enabled: false,
     daily_post_limit: 5,
+    total_views: 0,
   });
   const [showEditAnnounce, setShowEditAnnounce] = useState(false);
   const [expandAnnounce, setExpandAnnounce] = useState(false);
@@ -222,7 +225,7 @@ export default function HomePage() {
 
     const { data: annData } = await supabase
       .from('site_announcements')
-      .select('content, is_active, sponsor_url, vip_enabled, daily_post_limit')
+      .select('content, is_active, sponsor_url, vip_enabled, daily_post_limit, total_views')
       .eq('id', 1)
       .maybeSingle();
 
@@ -232,12 +235,24 @@ export default function HomePage() {
         typeof annData.daily_post_limit === 'number' && annData.daily_post_limit > 0
           ? annData.daily_post_limit
           : 5;
+
+      // 全站累積瀏覽人次計數（同一分頁工作階段內只加一次，含未註冊訪客）
+      let currentViews = Number(annData.total_views) || 0;
+      if (typeof window !== 'undefined' && !sessionStorage.getItem('pet_island_viewed')) {
+        sessionStorage.setItem('pet_island_viewed', '1');
+        const { data: updatedViews } = await supabase.rpc('increment_site_views');
+        if (typeof updatedViews === 'number') {
+          currentViews = updatedViews;
+        }
+      }
+
       setAnnouncement({
         content: annData.content || DEFAULT_ANNOUNCEMENT,
         is_active: annData.is_active ?? true,
         sponsor_url: annData.sponsor_url || '',
         vip_enabled: isVipOn,
         daily_post_limit: postLimit,
+        total_views: currentViews,
       });
       setEditAnnounceText(annData.content || DEFAULT_ANNOUNCEMENT);
       setEditAnnounceActive(annData.is_active ?? true);
@@ -1421,6 +1436,14 @@ export default function HomePage() {
             >
               <Lightbulb className="w-3.5 h-3.5 text-[#F59E0B]" /> 功能許願板
             </button>
+
+            <span
+              title="全站累積瀏覽人次（含未註冊訪客）"
+              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-bold bg-white border border-[#E6D8C3] text-[#6E6254] whitespace-nowrap shrink-0"
+            >
+              <Eye className="w-3.5 h-3.5 text-sky-500" />
+              瀏覽：{(announcement.total_views || 0).toLocaleString()}
+            </span>
 
             <button
               type="button"
