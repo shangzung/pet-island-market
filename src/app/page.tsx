@@ -8,6 +8,7 @@ import { GameProfileModal } from '@/components/GameProfileModal';
 import { DirectChatModal } from '@/components/DirectChatModal';
 import { AdminDashboardModal } from '@/components/AdminDashboardModal';
 import { CommunitySupportModal } from '@/components/CommunitySupportModal';
+import { ShareItemModal } from '@/components/ShareItemModal';
 import { checkSensitiveContent } from '@/lib/contentFilter';
 import { removeUnusedStorageImages } from '@/lib/storageCleanup';
 import {
@@ -45,6 +46,7 @@ import {
   Lightbulb,
   Crown,
   ArrowUpDown,
+  Share2,
 } from 'lucide-react';
 
 const CATEGORIES = [
@@ -112,6 +114,8 @@ export default function HomePage() {
 
   // 彈窗狀態
   const [activeItem, setActiveItem] = useState<any | null>(null);
+  const [shareTargetItem, setShareTargetItem] = useState<any | null>(null);
+  const [isShareJustPublished, setIsShareJustPublished] = useState(false);
   const [zoomedImage, setZoomedImage] = useState<string | null>(null);
   const [showUsersModal, setShowUsersModal] = useState(false);
   const [showAdminDashboard, setShowAdminDashboard] = useState(false);
@@ -156,6 +160,37 @@ export default function HomePage() {
     if (!vipEnabled) return false;
     if (!u?.vip_expires_at) return false;
     return new Date(u.vip_expires_at).getTime() > Date.now();
+  };
+
+  const syncUrlItemParam = (itemId: string | null) => {
+    if (typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    if (itemId) {
+      url.searchParams.set('item', itemId);
+    } else {
+      url.searchParams.delete('item');
+      url.searchParams.delete('just_published');
+    }
+    window.history.replaceState({}, '', url.toString());
+  };
+
+  const openItemModal = async (item: any) => {
+    setActiveItem(item);
+    syncUrlItemParam(item.id);
+    setShowReportBox(false);
+    setReportReason('');
+    setComments([]);
+    const { data } = await supabase
+      .from('comments')
+      .select('*')
+      .eq('item_id', item.id)
+      .order('created_at', { ascending: true });
+    if (data) setComments(data);
+  };
+
+  const closeItemModal = () => {
+    setActiveItem(null);
+    syncUrlItemParam(null);
   };
 
   const fetchData = async () => {
@@ -249,6 +284,36 @@ export default function HomePage() {
         return expireTime > now;
       });
       setItems(validItems);
+
+      // 偵測網址參數 ?item=xxx（外部社群直達連結）或剛發布完成 ?just_published=1
+      if (typeof window !== 'undefined') {
+        const params = new URLSearchParams(window.location.search);
+        const sharedItemId = params.get('item');
+        const justPublished = params.get('just_published') === '1';
+
+        if (sharedItemId) {
+          const targetItem = validItems.find((i) => i.id === sharedItemId);
+          if (targetItem) {
+            if (targetItem.post_type === 'wish') {
+              setActiveBoard('wish');
+            }
+            if (justPublished) {
+              setIsShareJustPublished(true);
+              setShareTargetItem(targetItem);
+              syncUrlItemParam(null);
+            } else {
+              openItemModal(targetItem);
+            }
+          }
+        } else if (justPublished && currentUser) {
+          const myLatestItem = validItems.find((i) => i.user_id === currentUser.id);
+          if (myLatestItem) {
+            setIsShareJustPublished(true);
+            setShareTargetItem(myLatestItem);
+            syncUrlItemParam(null);
+          }
+        }
+      }
     }
 
     if (currentUser) {
@@ -600,7 +665,7 @@ export default function HomePage() {
       alert('刪除失敗：' + error.message);
     } else {
       setItems((prev) => prev.filter((i) => i.id !== itemId));
-      if (activeItem?.id === itemId) setActiveItem(null);
+      if (activeItem?.id === itemId) closeItemModal();
     }
   };
 
@@ -643,7 +708,6 @@ export default function HomePage() {
 
     setSavingProfile(true);
 
-    // 檢查遊戲 ID 是否已被其他玩家使用
     const { data: existingId } = await supabase
       .from('users')
       .select('id')
@@ -680,19 +744,6 @@ export default function HomePage() {
       alert('更新失敗：' + error.message);
     }
     setSavingProfile(false);
-  };
-
-  const openItemModal = async (item: any) => {
-    setActiveItem(item);
-    setShowReportBox(false);
-    setReportReason('');
-    setComments([]);
-    const { data } = await supabase
-      .from('comments')
-      .select('*')
-      .eq('item_id', item.id)
-      .order('created_at', { ascending: true });
-    if (data) setComments(data);
   };
 
   const handleSendComment = async (e: React.FormEvent) => {
@@ -1712,6 +1763,16 @@ export default function HomePage() {
 
                         <div className="flex items-center gap-1.5 shrink-0">
                           <button
+                            onClick={() => {
+                              setIsShareJustPublished(false);
+                              setShareTargetItem(item);
+                            }}
+                            title="分享此貼文"
+                            className="p-1.5 rounded-xl bg-amber-50 text-[#D97706] hover:bg-amber-100"
+                          >
+                            <Share2 className="w-4 h-4" />
+                          </button>
+                          <button
                             onClick={() => handleToggleItemStatus(item)}
                             className="px-2.5 py-1.5 rounded-xl bg-white border border-[#E6D8C3] hover:border-[#F59E0B] text-xs font-bold text-[#4A4238] whitespace-nowrap"
                           >
@@ -1899,7 +1960,7 @@ export default function HomePage() {
       {/* 點擊卡片彈出的詳情與留言板視窗 */}
       {activeItem && (
         <div
-          onClick={() => setActiveItem(null)}
+          onClick={closeItemModal}
           className="fixed inset-0 z-40 bg-black/50 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4"
         >
           <div
@@ -1956,6 +2017,18 @@ export default function HomePage() {
 
               <div className="flex items-center gap-1.5 flex-wrap justify-end shrink-0">
                 <button
+                  type="button"
+                  onClick={() => {
+                    setIsShareJustPublished(false);
+                    setShareTargetItem(activeItem);
+                  }}
+                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-full bg-[#FFFDF7] border border-[#E6D8C3] hover:border-[#F59E0B] text-xs font-bold text-[#6E6254] whitespace-nowrap transition"
+                  title="分享到 LINE / FB / IG / Threads / 巴哈 / 抖音"
+                >
+                  <Share2 className="w-3.5 h-3.5 text-[#F59E0B]" /> 分享
+                </button>
+
+                <button
                   onClick={(e) => handleToggleFavorite(e, activeItem.id)}
                   className={`p-2 rounded-full border transition ${
                     favoriteIds.includes(activeItem.id)
@@ -2002,7 +2075,7 @@ export default function HomePage() {
                             ? activeItem.images[0]
                             : undefined,
                       };
-                      setActiveItem(null);
+                      closeItemModal();
                       setChatTargetUserId(targetId);
                       setChatContextItem(itemContext);
                       setShowChatModal(true);
@@ -2023,7 +2096,7 @@ export default function HomePage() {
                 )}
 
                 <button
-                  onClick={() => setActiveItem(null)}
+                  onClick={closeItemModal}
                   className="p-1.5 rounded-full bg-[#FFFDF7] border border-[#E6D8C3] text-[#8C7B6B] hover:text-[#4A4238]"
                 >
                   <X className="w-5 h-5" />
@@ -2166,6 +2239,20 @@ export default function HomePage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* 全平台一鍵分享彈窗 */}
+      {shareTargetItem && (
+        <ShareItemModal
+          item={shareTargetItem}
+          sellerName={getDisplayName(shareTargetItem.user_id)}
+          sellerGameId={usersMap[shareTargetItem.user_id]?.game_id}
+          isJustPublished={isShareJustPublished}
+          onClose={() => {
+            setShareTargetItem(null);
+            setIsShareJustPublished(false);
+          }}
+        />
       )}
 
       {/* 1 對 1 聊天室視窗 */}

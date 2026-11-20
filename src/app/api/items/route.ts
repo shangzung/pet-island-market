@@ -111,25 +111,29 @@ export async function POST(request: Request) {
     const durationHours = 168;
     const expiresAt = new Date(Date.now() + durationHours * 60 * 60 * 1000).toISOString();
 
-    const { error: insertError } = await supabase.from('items').insert({
-      user_id: user.id,
-      post_type: body.post_type === 'wish' ? 'wish' : 'offer',
-      title: body.title,
-      category: body.category,
-      rarity: body.rarity,
-      wanted_items: body.wanted_items,
-      description: body.description,
-      images: body.images || [],
-      status: 'active',
-      ip_address: ip,
-      expires_at: expiresAt,
-    });
+    const { data: insertedItem, error: insertError } = await supabase
+      .from('items')
+      .insert({
+        user_id: user.id,
+        post_type: body.post_type === 'wish' ? 'wish' : 'offer',
+        title: body.title,
+        category: body.category,
+        rarity: body.rarity,
+        wanted_items: body.wanted_items,
+        description: body.description,
+        images: body.images || [],
+        status: 'active',
+        ip_address: ip,
+        expires_at: expiresAt,
+      })
+      .select('id')
+      .single();
 
     if (insertError) {
       return NextResponse.json({ error: insertError.message }, { status: 400 });
     }
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true, itemId: insertedItem?.id });
   } catch (err: any) {
     return NextResponse.json({ error: err.message || '伺服器錯誤' }, { status: 500 });
   }

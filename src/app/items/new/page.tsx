@@ -146,11 +146,13 @@ export default function NewItemPage() {
   };
 
   // 根據輸入的道具名稱過濾推薦的共用圖鑑
-  const matchingCatalog = catalogList.filter((c) => {
-    const kw = title.trim().toLowerCase();
-    if (!kw) return true;
-    return c.item_name.toLowerCase().includes(kw);
-  }).slice(0, 8);
+  const matchingCatalog = catalogList
+    .filter((c) => {
+      const kw = title.trim().toLowerCase();
+      if (!kw) return true;
+      return c.item_name.toLowerCase().includes(kw);
+    })
+    .slice(0, 8);
 
   const compressImage = (file: File): Promise<Blob> => {
     return new Promise((resolve) => {
@@ -164,11 +166,7 @@ export default function NewItemPage() {
         canvas.height = img.height * scale;
         const ctx = canvas.getContext('2d');
         ctx?.drawImage(img, 0, 0, canvas.width, canvas.height);
-        canvas.toBlob(
-          (blob) => resolve(blob || file),
-          'image/webp',
-          0.8
-        );
+        canvas.toBlob((blob) => resolve(blob || file), 'image/webp', 0.8);
       };
     });
   };
@@ -238,7 +236,12 @@ export default function NewItemPage() {
         throw new Error(result.error || '發布失敗');
       }
 
-      router.push('/');
+      // 帶上新建貼文 ID 與 just_published=1 跳回首頁，自動彈出全平台分享視窗
+      const nextUrl = result.itemId
+        ? `/?item=${result.itemId}&just_published=1`
+        : '/?just_published=1';
+
+      router.push(nextUrl);
       router.refresh();
     } catch (err: any) {
       setErrorMsg(err.message || '發布失敗，請稍後再試');
