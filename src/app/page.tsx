@@ -106,6 +106,7 @@ export default function HomePage() {
     daily_post_limit: 5,
   });
   const [showEditAnnounce, setShowEditAnnounce] = useState(false);
+  const [expandAnnounce, setExpandAnnounce] = useState(false);
   const [editAnnounceText, setEditAnnounceText] = useState(DEFAULT_ANNOUNCEMENT);
   const [editAnnounceActive, setEditAnnounceActive] = useState(true);
 
@@ -823,26 +824,57 @@ export default function HomePage() {
         />
       )}
 
-      {/* 全站公告橫幅 */}
+      {/* 全站公告橫幅（長文字自動跑馬燈，點擊可展開閱讀全文） */}
       {(announcement.is_active || isAdmin) && (
         <div className="bg-[#FEF3C7] border-b border-[#F59E0B]/30 px-3 sm:px-4 py-1.5 landscape:py-1 text-xs text-[#92400E]">
           <div className="max-w-6xl mx-auto flex items-center justify-between gap-2">
-            <div className="flex items-center gap-1.5 min-w-0">
+            <div
+              onClick={() => announcement.is_active && setExpandAnnounce(!expandAnnounce)}
+              title="點擊可展開 / 收合完整公告內容"
+              className="flex items-center gap-1.5 min-w-0 flex-1 overflow-hidden cursor-pointer select-none"
+            >
               <Megaphone className="w-3.5 h-3.5 text-[#D97706] shrink-0" />
-              <span className="font-medium truncate">
-                {announcement.is_active
-                  ? announcement.content
-                  : '（目前全站公告已隱藏，點擊右側可重新開啟）'}
-              </span>
+              {!announcement.is_active ? (
+                <span className="font-medium truncate">
+                  （目前全站公告已隱藏，點擊右側可重新開啟）
+                </span>
+              ) : expandAnnounce ? (
+                <span className="font-medium whitespace-normal leading-relaxed py-0.5">
+                  {announcement.content}
+                </span>
+              ) : announcement.content.length > 36 ? (
+                <div className="overflow-hidden flex-1">
+                  <div className="animate-announce-marquee font-medium">
+                    <span className="pr-12">{announcement.content}</span>
+                    <span className="pr-12" aria-hidden="true">
+                      {announcement.content}
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <span className="font-medium truncate">{announcement.content}</span>
+              )}
             </div>
-            {isAdmin && (
-              <button
-                onClick={() => setShowEditAnnounce(!showEditAnnounce)}
-                className="px-2.5 py-0.5 rounded-full bg-white/80 hover:bg-white border border-[#F59E0B]/40 text-[#B45309] font-bold whitespace-nowrap shrink-0"
-              >
-                編輯公告
-              </button>
-            )}
+
+            <div className="flex items-center gap-1.5 shrink-0">
+              {announcement.is_active && announcement.content.length > 36 && (
+                <button
+                  type="button"
+                  onClick={() => setExpandAnnounce(!expandAnnounce)}
+                  className="px-2 py-0.5 rounded-full bg-amber-500/15 hover:bg-amber-500/25 text-[#92400E] font-bold text-[11px] whitespace-nowrap"
+                >
+                  {expandAnnounce ? '收合' : '展開'}
+                </button>
+              )}
+              {isAdmin && (
+                <button
+                  onClick={() => setShowEditAnnounce(!showEditAnnounce)}
+                  className="px-2.5 py-0.5 rounded-full bg-white/80 hover:bg-white border border-[#F59E0B]/40 text-[#B45309] font-bold whitespace-nowrap"
+                >
+                  編輯公告
+                </button>
+              )}
+            </div>
           </div>
 
           {isAdmin && showEditAnnounce && (
