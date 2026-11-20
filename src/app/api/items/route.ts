@@ -49,6 +49,14 @@ export async function POST(request: Request) {
       );
     }
 
+    // 讀取全站 VIP 制度開關
+    const { data: siteConfig } = await supabase
+      .from('site_announcements')
+      .select('vip_enabled')
+      .eq('id', 1)
+      .maybeSingle();
+    const vipEnabled = siteConfig?.vip_enabled === true;
+
     // 檢查管理員、停權與 VIP 到期狀態
     const { data: profile } = await supabase
       .from('users')
@@ -65,7 +73,9 @@ export async function POST(request: Request) {
 
     const isAdmin = profile?.is_admin === true;
     const isVip =
-      profile?.vip_expires_at && new Date(profile.vip_expires_at).getTime() > Date.now();
+      vipEnabled &&
+      profile?.vip_expires_at &&
+      new Date(profile.vip_expires_at).getTime() > Date.now();
 
     // 檢查 24 小時內發文上限（一般會員 1 篇 / VIP 會員 5 篇 / 管理員無限制）
     if (!isAdmin) {
@@ -94,8 +104,9 @@ export async function POST(request: Request) {
         if (recentItems && recentItems.length > 0) {
           return NextResponse.json(
             {
-              error:
-                '一般島民每 24 小時限發布 1 篇貼文喔！（升級 👑 VIP 島主可享每日 5 篇＋保留 7 天特權）',
+              error: vipEnabled
+                ? '一般島民每 24 小時限發布 1 篇貼文喔！（升級 👑 VIP 島主可享每日 5 篇＋保留 7 天特權）'
+                : '每位島民每 24 小時限發布 1 篇貼文喔！',
             },
             { status: 429 }
           );

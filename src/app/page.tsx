@@ -82,21 +82,23 @@ export default function HomePage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [selectedRarity, setSelectedRarity] = useState('全部');
-  const [sortBy, setSortBy] = useState<'vip_first' | 'newest' | 'reviews' | 'expiring'>('vip_first');
+  const [sortBy, setSortBy] = useState<'vip_first' | 'newest' | 'reviews' | 'expiring'>('newest');
   const [showCompleted, setShowCompleted] = useState(false);
 
   // 成交快報輪播索引
   const [tickerIndex, setTickerIndex] = useState(0);
 
-  // 全站公告與贊助連結狀態
+  // 全站公告、贊助連結與 VIP 系統總開關狀態
   const [announcement, setAnnouncement] = useState<{
     content: string;
     is_active: boolean;
     sponsor_url?: string;
+    vip_enabled?: boolean;
   }>({
     content: '',
     is_active: false,
     sponsor_url: '',
+    vip_enabled: false,
   });
   const [showEditAnnounce, setShowEditAnnounce] = useState(false);
   const [editAnnounceText, setEditAnnounceText] = useState('');
@@ -112,11 +114,12 @@ export default function HomePage() {
 
   // 功能許願與贊助 VIP 彈窗
   const [showSupportModal, setShowSupportModal] = useState(false);
-  const [supportModalTab, setSupportModalTab] = useState<'feedback' | 'vip'>('vip');
+  const [supportModalTab, setSupportModalTab] = useState<'feedback' | 'vip'>('feedback');
 
-  // 我的市集修改名稱狀態
+  // 我的市集修改遊戲 ID 與名稱狀態
+  const [editGameId, setEditGameId] = useState('');
   const [editGameName, setEditGameName] = useState('');
-  const [savingName, setSavingName] = useState(false);
+  const [savingProfile, setSavingProfile] = useState(false);
 
   // 複製 ID 與檢舉狀態
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -137,7 +140,10 @@ export default function HomePage() {
   const [chatContextItem, setChatContextItem] = useState<any | null>(null);
   const [unreadDmCount, setUnreadDmCount] = useState(0);
 
+  const vipEnabled = announcement.vip_enabled === true;
+
   const isUserVip = (u: any) => {
+    if (!vipEnabled) return false;
     if (!u?.vip_expires_at) return false;
     return new Date(u.vip_expires_at).getTime() > Date.now();
   };
@@ -149,13 +155,20 @@ export default function HomePage() {
 
     const { data: annData } = await supabase
       .from('site_announcements')
-      .select('content, is_active, sponsor_url')
+      .select('content, is_active, sponsor_url, vip_enabled')
       .eq('id', 1)
       .maybeSingle();
     if (annData) {
-      setAnnouncement(annData);
+      const isVipOn = annData.vip_enabled === true;
+      setAnnouncement({
+        content: annData.content,
+        is_active: annData.is_active,
+        sponsor_url: annData.sponsor_url,
+        vip_enabled: isVipOn,
+      });
       setEditAnnounceText(annData.content);
       setEditAnnounceActive(annData.is_active);
+      setSortBy(isVipOn ? 'vip_first' : 'newest');
     }
 
     const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
@@ -192,6 +205,7 @@ export default function HomePage() {
             good_reviews: u.good_reviews || 0,
             vip_expires_at: u.vip_expires_at,
           });
+          setEditGameId(u.game_id || '');
           setEditGameName(u.game_name || '');
           if (!u.game_id || !u.game_name) {
             setNeedBindProfile(true);
@@ -424,6 +438,25 @@ export default function HomePage() {
     }
   };
 
+  const handleToggleVipSystem = async (nextEnabled: boolean) => {
+    const { error } = await supabase
+      .from('site_announcements')
+      .upsert({
+        id: 1,
+        content: announcement.content || '🎉 歡迎來到寵物島市集！',
+        is_active: announcement.is_active,
+        vip_enabled: nextEnabled,
+        updated_at: new Date().toISOString(),
+      });
+
+    if (!error) {
+      setAnnouncement((prev) => ({ ...prev, vip_enabled: nextEnabled }));
+      setSortBy(nextEnabled ? 'vip_first' : 'newest');
+    } else {
+      alert('切換 VIP 系統狀態失敗：' + error.message);
+    }
+  };
+
   const handleToggleVipUser = async (targetUser: any) => {
     const currentlyVip = isUserVip(targetUser);
     const nextVipExpires = currentlyVip
@@ -561,34 +594,58 @@ export default function HomePage() {
     setSubmittingReport(false);
   };
 
-  const handleUpdateMyName = async (e: React.FormEvent) => {
+  const handleUpdateMyProfile = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user || !editGameName.trim()) return;
+    if (!user || !editGameId.trim() || !editGameName.trim()) return;
 
+    const cleanId = editGameId.trim();
     const cleanName = editGameName.trim();
+
     const filterResult = checkSensitiveContent(cleanName);
     if (!filterResult.isClean) {
       alert(`遊戲名稱包含禁止字詞「${filterResult.matchedWord}」，請重新輸入！`);
       return;
     }
 
-    setSavingName(true);
+    setSavingProfile(true);
+
+    // 檢查遊戲 ID 是否已被其他玩家使用
+    const { data: existingId } = await supabase
+      .from('users')
+      .select('id')
+      .eq('game_id', cleanId)
+      .neq('id', user.id)
+      .maybeSingle();
+
+    if (existingId) {
+      alert(`遊戲 ID「${cleanId}」已被其他帳號綁定，請確認是否輸入正確！`);
+      setSavingProfile(false);
+      return;
+    }
+
     const { error } = await supabase
       .from('users')
-      .update({ game_name: cleanName, nickname: cleanName })
+      .update({ game_id: cleanId, game_name: cleanName, nickname: cleanName })
       .eq('id', user.id);
 
     if (!error) {
-      setMyProfile((prev) => (prev ? { ...prev, game_name: cleanName } : null));
+      setMyProfile((prev) =>
+        prev ? { ...prev, game_id: cleanId, game_name: cleanName } : null
+      );
       setUsersMap((prev) => ({
         ...prev,
-        [user.id]: { ...prev[user.id], game_name: cleanName, nickname: cleanName },
+        [user.id]: {
+          ...prev[user.id],
+          game_id: cleanId,
+          game_name: cleanName,
+          nickname: cleanName,
+        },
       }));
-      alert('遊戲名稱更新成功！');
+      alert('遊戲名片更新成功！');
     } else {
       alert('更新失敗：' + error.message);
     }
-    setSavingName(false);
+    setSavingProfile(false);
   };
 
   const openItemModal = async (item: any) => {
@@ -677,7 +734,7 @@ export default function HomePage() {
     window.location.reload();
   };
 
-  // 篩選 + 排序（支援 VIP 優先置頂曝光）
+  // 篩選 + 排序（僅在 VIP 系統開啟時套用 VIP 優先置頂）
   const filteredItems = useMemo(() => {
     const list = items.filter((item) => {
       const itemPostType = item.post_type === 'wish' ? 'wish' : 'offer';
@@ -698,7 +755,7 @@ export default function HomePage() {
     });
 
     return [...list].sort((a, b) => {
-      if (sortBy === 'vip_first') {
+      if (vipEnabled && sortBy === 'vip_first') {
         const aVip = isUserVip(usersMap[a.user_id]) ? 1 : 0;
         const bVip = isUserVip(usersMap[b.user_id]) ? 1 : 0;
         if (bVip !== aVip) return bVip - aVip;
@@ -714,7 +771,7 @@ export default function HomePage() {
       }
       return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
     });
-  }, [items, activeBoard, showCompleted, selectedCategory, selectedRarity, searchQuery, sortBy, usersMap]);
+  }, [items, activeBoard, showCompleted, selectedCategory, selectedRarity, searchQuery, sortBy, usersMap, vipEnabled]);
 
   const myItems = user ? items.filter((i) => i.user_id === user.id) : [];
   const myFavoriteItems = items.filter((i) => favoriteIds.includes(i.id));
@@ -835,7 +892,7 @@ export default function HomePage() {
                 className="hidden lg:inline-flex items-center gap-1.5 ml-1 px-3 py-1.5 rounded-full bg-white border border-[#E6D8C3] hover:border-[#F59E0B] text-xs whitespace-nowrap transition"
               >
                 <Store className="w-3.5 h-3.5 text-[#F59E0B]" />
-                {isUserVip(myProfile) && (
+                {vipEnabled && isUserVip(myProfile) && (
                   <span className="px-1.5 py-0.2 rounded-full bg-amber-500 text-white text-[10px] font-bold">
                     👑 VIP
                   </span>
@@ -866,17 +923,19 @@ export default function HomePage() {
           </div>
 
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-            <button
-              onClick={() => {
-                setSupportModalTab('vip');
-                setShowSupportModal(true);
-              }}
-              className="inline-flex items-center gap-1 px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-full bg-gradient-to-r from-amber-500 to-yellow-500 text-white text-xs font-bold shadow-2xs whitespace-nowrap shrink-0 hover:opacity-95 transition"
-              title="升級 VIP 島主 & 功能許願"
-            >
-              <Crown className="w-3.5 h-3.5" />
-              <span>VIP</span>
-            </button>
+            {vipEnabled && (
+              <button
+                onClick={() => {
+                  setSupportModalTab('vip');
+                  setShowSupportModal(true);
+                }}
+                className="inline-flex items-center gap-1 px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-full bg-gradient-to-r from-amber-500 to-yellow-500 text-white text-xs font-bold shadow-2xs whitespace-nowrap shrink-0 hover:opacity-95 transition"
+                title="升級 VIP 島主 & 功能許願"
+              >
+                <Crown className="w-3.5 h-3.5" />
+                <span>VIP</span>
+              </button>
+            )}
 
             {user ? (
               <>
@@ -1113,7 +1172,7 @@ export default function HomePage() {
                 onChange={(e) => setSortBy(e.target.value as any)}
                 className="bg-transparent text-xs font-medium text-[#4A4238] focus:outline-none cursor-pointer"
               >
-                <option value="vip_first">👑 VIP 置頂優先</option>
+                {vipEnabled && <option value="vip_first">👑 VIP 置頂優先</option>}
                 <option value="newest">🕒 最新上架</option>
                 <option value="reviews">👍 好評最高</option>
                 <option value="expiring">⏳ 即將到期</option>
@@ -1146,7 +1205,13 @@ export default function HomePage() {
             <button
               type="button"
               onClick={() => isAdmin && setShowUsersModal(true)}
-              title={isAdmin ? '點擊查看完整島民註冊名冊、VIP 開通與停權管理' : '寵物島市集總註冊人數'}
+              title={
+                isAdmin
+                  ? vipEnabled
+                    ? '點擊查看完整島民註冊名冊、VIP 開通與停權管理'
+                    : '點擊查看完整島民註冊名冊與停權管理'
+                  : '寵物島市集總註冊人數'
+              }
               className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold border whitespace-nowrap shrink-0 transition ${
                 isAdmin
                   ? 'bg-[#FEF3C7] border-[#F59E0B] text-[#B45309] hover:bg-[#FDE68A] cursor-pointer'
@@ -1164,27 +1229,29 @@ export default function HomePage() {
           </div>
         </div>
 
-        {/* VIP 尊榮曝光輕引導橫幅 */}
-        <div className="mb-4 px-3.5 py-2 rounded-2xl bg-gradient-to-r from-[#FEF3C7] via-[#FFFBEB] to-[#FEF3C7] border border-amber-300/70 flex items-center justify-between gap-2 text-xs">
-          <div className="flex items-center gap-1.5 min-w-0 text-amber-900">
-            <Crown className="w-4 h-4 text-amber-600 shrink-0" />
-            <span className="truncate font-medium">
-              <strong>👑 VIP 島主特權：</strong>享首頁最前排置頂曝光、每日可發 5 篇、上架保留 7 天免重發！
-            </span>
+        {/* VIP 尊榮曝光輕引導橫幅（僅在 VIP 系統開啟時顯示） */}
+        {vipEnabled && (
+          <div className="mb-4 px-3.5 py-2 rounded-2xl bg-gradient-to-r from-[#FEF3C7] via-[#FFFBEB] to-[#FEF3C7] border border-amber-300/70 flex items-center justify-between gap-2 text-xs">
+            <div className="flex items-center gap-1.5 min-w-0 text-amber-900">
+              <Crown className="w-4 h-4 text-amber-600 shrink-0" />
+              <span className="truncate font-medium">
+                <strong>👑 VIP 島主特權：</strong>享首頁最前排置頂曝光、每日可發 5 篇、上架保留 7 天免重發！
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setSupportModalTab('vip');
+                setShowSupportModal(true);
+              }}
+              className="px-2.5 py-1 rounded-full bg-amber-500 hover:bg-amber-600 text-white font-bold text-[11px] whitespace-nowrap shrink-0 transition"
+            >
+              了解特權
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={() => {
-              setSupportModalTab('vip');
-              setShowSupportModal(true);
-            }}
-            className="px-2.5 py-1 rounded-full bg-amber-500 hover:bg-amber-600 text-white font-bold text-[11px] whitespace-nowrap shrink-0 transition"
-          >
-            了解特權
-          </button>
-        </div>
+        )}
 
-        {/* 商品卡片網格（手機直式 2 欄、手機橫式 3 欄、電腦 4 欄，大小最人性化） */}
+        {/* 商品卡片網格 */}
         {loading ? (
           <div className="text-center py-20 text-[#8C7B6B]">載入資料中...</div>
         ) : filteredItems.length === 0 ? (
@@ -1379,7 +1446,8 @@ export default function HomePage() {
               }}
               className="inline-flex items-center gap-1 text-xs font-bold text-[#6E6254] hover:text-[#D97706] bg-white border border-[#E6D8C3] px-3.5 py-1.5 rounded-full transition"
             >
-              <Lightbulb className="w-3.5 h-3.5 text-[#F59E0B] shrink-0" /> 功能許願板 & 贊助 VIP
+              <Lightbulb className="w-3.5 h-3.5 text-[#F59E0B] shrink-0" />{' '}
+              {vipEnabled ? '功能許願板 & 贊助 VIP' : '功能許願板'}
             </button>
           </div>
           <p className="text-xs text-[#8C7B6B] max-w-3xl mx-auto leading-relaxed">
@@ -1394,11 +1462,12 @@ export default function HomePage() {
           currentUser={user}
           isAdmin={isAdmin}
           isBanned={isBanned}
+          vipEnabled={vipEnabled}
           myDisplayName={myProfile?.game_name || '島民玩家'}
           myGameId={myProfile?.game_id || ''}
           sponsorUrl={announcement.sponsor_url || ''}
           adminUserId={firstAdminUser?.id}
-          initialTab={supportModalTab}
+          initialTab={vipEnabled ? supportModalTab : 'feedback'}
           onClose={() => setShowSupportModal(false)}
           onOpenChatWithAdmin={(adminId) => {
             setChatTargetUserId(adminId);
@@ -1418,6 +1487,8 @@ export default function HomePage() {
         <AdminDashboardModal
           usersList={usersList}
           items={items}
+          vipEnabled={vipEnabled}
+          onToggleVipSystem={handleToggleVipSystem}
           onClose={() => setShowAdminDashboard(false)}
           onRefreshData={fetchData}
         />
@@ -1451,45 +1522,67 @@ export default function HomePage() {
                 <div className="flex items-center justify-between flex-wrap gap-2 text-xs text-[#8C7B6B] mb-3">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span>
-                      遊戲 ID：<strong className="text-[#4A4238] font-mono">{myProfile?.game_id}</strong>
+                      目前遊戲 ID：<strong className="text-[#4A4238] font-mono">{myProfile?.game_id}</strong>
                     </span>
-                    {isUserVip(myProfile) ? (
-                      <span className="px-2 py-0.5 rounded-full bg-amber-500 text-white text-[10px] font-bold">
-                        👑 VIP 到期：{new Date(myProfile!.vip_expires_at!).toLocaleDateString('zh-TW')}
-                      </span>
-                    ) : (
-                      <button
-                        onClick={() => {
-                          setShowMyMarketModal(false);
-                          setSupportModalTab('vip');
-                          setShowSupportModal(true);
-                        }}
-                        className="text-[11px] text-[#D97706] underline font-bold"
-                      >
-                        升級 👑 VIP
-                      </button>
-                    )}
+                    {vipEnabled &&
+                      (isUserVip(myProfile) ? (
+                        <span className="px-2 py-0.5 rounded-full bg-amber-500 text-white text-[10px] font-bold">
+                          👑 VIP 到期：{new Date(myProfile!.vip_expires_at!).toLocaleDateString('zh-TW')}
+                        </span>
+                      ) : (
+                        <button
+                          onClick={() => {
+                            setShowMyMarketModal(false);
+                            setSupportModalTab('vip');
+                            setShowSupportModal(true);
+                          }}
+                          className="text-[11px] text-[#D97706] underline font-bold"
+                        >
+                          升級 👑 VIP
+                        </button>
+                      ))}
                   </div>
                   <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold">
                     👍 累計好評：{myProfile?.good_reviews || 0} 次
                   </span>
                 </div>
 
-                <form onSubmit={handleUpdateMyName} className="flex gap-2">
-                  <input
-                    type="text"
-                    value={editGameName}
-                    onChange={(e) => setEditGameName(e.target.value)}
-                    placeholder="修改遊戲名稱..."
-                    className="flex-1 min-w-0 px-3.5 py-2 rounded-xl bg-white border border-[#E6D8C3] text-xs focus:outline-none focus:border-[#F59E0B]"
-                  />
-                  <button
-                    type="submit"
-                    disabled={savingName || !editGameName.trim()}
-                    className="px-3.5 py-2 rounded-xl bg-[#F59E0B] hover:bg-[#D97706] text-white text-xs font-bold whitespace-nowrap shrink-0 disabled:opacity-50"
-                  >
-                    {savingName ? '儲存中...' : '更新名稱'}
-                  </button>
+                <form onSubmit={handleUpdateMyProfile} className="space-y-2.5">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[11px] font-bold text-[#8C7B6B] mb-1">
+                        遊戲 ID（英數字帳號 ID，供一鍵複製）
+                      </label>
+                      <input
+                        type="text"
+                        value={editGameId}
+                        onChange={(e) => setEditGameId(e.target.value)}
+                        placeholder="例：rraknam9"
+                        className="w-full px-3.5 py-2 rounded-xl bg-white border border-[#E6D8C3] text-xs font-mono focus:outline-none focus:border-[#F59E0B]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-[#8C7B6B] mb-1">
+                        遊戲名稱（角色顯示暱稱）
+                      </label>
+                      <input
+                        type="text"
+                        value={editGameName}
+                        onChange={(e) => setEditGameName(e.target.value)}
+                        placeholder="例：花無缺"
+                        className="w-full px-3.5 py-2 rounded-xl bg-white border border-[#E6D8C3] text-xs focus:outline-none focus:border-[#F59E0B]"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex justify-end">
+                    <button
+                      type="submit"
+                      disabled={savingProfile || !editGameId.trim() || !editGameName.trim()}
+                      className="px-4 py-2 rounded-xl bg-[#F59E0B] hover:bg-[#D97706] text-white text-xs font-bold whitespace-nowrap shrink-0 disabled:opacity-50"
+                    >
+                      {savingProfile ? '儲存中...' : '儲存名片資料'}
+                    </button>
+                  </div>
                 </form>
               </div>
 
@@ -1614,7 +1707,7 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* 管理者專屬：即時註冊島民名冊（支援一鍵開通 30 天 VIP & 停權封鎖 ID） */}
+      {/* 管理者專屬：即時註冊島民名冊 */}
       {isAdmin && showUsersModal && (
         <div
           onClick={() => setShowUsersModal(false)}
@@ -1701,17 +1794,19 @@ export default function HomePage() {
 
                     {!u.is_admin && (
                       <div className="flex items-center gap-1.5 flex-wrap shrink-0">
-                        <button
-                          onClick={() => handleToggleVipUser(u)}
-                          className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold whitespace-nowrap transition ${
-                            targetIsVip
-                              ? 'bg-gray-200 hover:bg-gray-300 text-gray-700'
-                              : 'bg-amber-500 hover:bg-amber-600 text-white'
-                          }`}
-                        >
-                          <Crown className="w-3 h-3" />
-                          {targetIsVip ? '取消 VIP' : '開通30天VIP'}
-                        </button>
+                        {vipEnabled && (
+                          <button
+                            onClick={() => handleToggleVipUser(u)}
+                            className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold whitespace-nowrap transition ${
+                              targetIsVip
+                                ? 'bg-gray-200 hover:bg-gray-300 text-gray-700'
+                                : 'bg-amber-500 hover:bg-amber-600 text-white'
+                            }`}
+                          >
+                            <Crown className="w-3 h-3" />
+                            {targetIsVip ? '取消 VIP' : '開通30天VIP'}
+                          </button>
+                        )}
 
                         <button
                           onClick={() => handleToggleBanUser(u)}

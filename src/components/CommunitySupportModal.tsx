@@ -21,6 +21,7 @@ interface CommunitySupportModalProps {
   currentUser: any;
   isAdmin: boolean;
   isBanned: boolean;
+  vipEnabled: boolean;
   myDisplayName: string;
   myGameId: string;
   sponsorUrl: string;
@@ -35,17 +36,20 @@ export function CommunitySupportModal({
   currentUser,
   isAdmin,
   isBanned,
+  vipEnabled,
   myDisplayName,
   myGameId,
   sponsorUrl,
   adminUserId,
-  initialTab = 'vip',
+  initialTab = 'feedback',
   onClose,
   onOpenChatWithAdmin,
   onSaveSponsorUrl,
 }: CommunitySupportModalProps) {
   const supabase = createClient();
-  const [activeTab, setActiveTab] = useState<'feedback' | 'vip'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'feedback' | 'vip'>(
+    vipEnabled ? initialTab : 'feedback'
+  );
   const [requests, setRequests] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [newIdea, setNewIdea] = useState('');
@@ -160,16 +164,18 @@ export function CommunitySupportModal({
       >
         <div className="px-4 sm:px-6 py-3.5 bg-[#FFFDF7] border-b border-[#F3E8D2] flex items-center justify-between gap-2 shrink-0">
           <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto no-scrollbar">
-            <button
-              onClick={() => setActiveTab('vip')}
-              className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-bold whitespace-nowrap shrink-0 transition ${
-                activeTab === 'vip'
-                  ? 'bg-gradient-to-r from-amber-500 to-yellow-500 text-white shadow-xs'
-                  : 'bg-white border border-[#E6D8C3] text-[#6E6254]'
-              }`}
-            >
-              <Crown className="w-4 h-4" /> 👑 尊榮 VIP 島主
-            </button>
+            {vipEnabled && (
+              <button
+                onClick={() => setActiveTab('vip')}
+                className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-bold whitespace-nowrap shrink-0 transition ${
+                  activeTab === 'vip'
+                    ? 'bg-gradient-to-r from-amber-500 to-yellow-500 text-white shadow-xs'
+                    : 'bg-white border border-[#E6D8C3] text-[#6E6254]'
+                }`}
+              >
+                <Crown className="w-4 h-4" /> 👑 尊榮 VIP 島主
+              </button>
+            )}
             <button
               onClick={() => setActiveTab('feedback')}
               className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-bold whitespace-nowrap shrink-0 transition ${
@@ -189,7 +195,7 @@ export function CommunitySupportModal({
           </button>
         </div>
 
-        {activeTab === 'vip' ? (
+        {vipEnabled && activeTab === 'vip' ? (
           <div className="p-4 sm:p-6 flex-1 overflow-y-auto space-y-4">
             <div className="text-center space-y-1">
               <div className="inline-flex items-center gap-1 px-3 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[11px] font-bold">

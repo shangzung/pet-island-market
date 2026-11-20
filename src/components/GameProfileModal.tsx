@@ -28,7 +28,6 @@ export function GameProfileModal({ userId, onSuccess }: GameProfileModalProps) {
       return;
     }
 
-    // 檢查遊戲名稱是否包含違禁詞
     const filterCheck = checkSensitiveContent(cleanName);
     if (!filterCheck.isClean) {
       setErrorMsg(`遊戲名稱包含違禁字詞「${filterCheck.matchedWord}」，請重新輸入！`);
@@ -38,7 +37,6 @@ export function GameProfileModal({ userId, onSuccess }: GameProfileModalProps) {
     setSaving(true);
     setErrorMsg('');
 
-    // 1. 檢查此遊戲 ID 是否已被列入「跨帳號高風險黑名單」
     const { data: bannedRecord } = await supabase
       .from('banned_game_ids')
       .select('game_id, reason')
@@ -53,7 +51,6 @@ export function GameProfileModal({ userId, onSuccess }: GameProfileModalProps) {
       return;
     }
 
-    // 2. 檢查遊戲 ID 是否已被其他正常帳號綁定
     const { data: existing } = await supabase
       .from('users')
       .select('id')
@@ -122,25 +119,25 @@ export function GameProfileModal({ userId, onSuccess }: GameProfileModalProps) {
             <form onSubmit={handleSave} className="space-y-4 mt-5">
               <div>
                 <label className="block text-sm font-semibold mb-1.5">
-                  遊戲 ID <span className="text-red-400">*</span>
+                  遊戲 ID（供買賣家搜尋加好友） <span className="text-red-400">*</span>
                 </label>
                 <input
                   type="text"
-                  placeholder="請輸入你的遊戲內數字 / 英數 ID"
+                  placeholder="請填寫英數字帳號 ID（例：rraknam9）"
                   value={gameId}
                   onChange={(e) => setGameId(e.target.value)}
-                  className="w-full px-4 py-3 rounded-2xl bg-[#FFFDF7] border border-[#E6D8C3] text-sm focus:outline-none focus:border-[#F59E0B]"
+                  className="w-full px-4 py-3 rounded-2xl bg-[#FFFDF7] border border-[#E6D8C3] text-sm font-mono focus:outline-none focus:border-[#F59E0B]"
                   required
                 />
               </div>
 
               <div>
                 <label className="block text-sm font-semibold mb-1.5">
-                  遊戲名稱 <span className="text-red-400">*</span>
+                  遊戲名稱（角色顯示暱稱） <span className="text-red-400">*</span>
                 </label>
                 <input
                   type="text"
-                  placeholder="請輸入你在遊戲裡的顯示名稱"
+                  placeholder="請填寫遊戲內角色名稱（例：花無缺）"
                   value={gameName}
                   onChange={(e) => setGameName(e.target.value)}
                   className="w-full px-4 py-3 rounded-2xl bg-[#FFFDF7] border border-[#E6D8C3] text-sm focus:outline-none focus:border-[#F59E0B]"

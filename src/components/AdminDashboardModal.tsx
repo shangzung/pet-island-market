@@ -15,11 +15,14 @@ import {
   Ban,
   Check,
   BookOpenCheck,
+  Crown,
 } from 'lucide-react';
 
 interface AdminDashboardModalProps {
   usersList: any[];
   items: any[];
+  vipEnabled: boolean;
+  onToggleVipSystem: (nextEnabled: boolean) => Promise<void>;
   onClose: () => void;
   onRefreshData: () => void;
 }
@@ -27,6 +30,8 @@ interface AdminDashboardModalProps {
 export function AdminDashboardModal({
   usersList,
   items,
+  vipEnabled,
+  onToggleVipSystem,
   onClose,
   onRefreshData,
 }: AdminDashboardModalProps) {
@@ -34,6 +39,7 @@ export function AdminDashboardModal({
   const [reports, setReports] = useState<any[]>([]);
   const [catalogItems, setCatalogItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [togglingVip, setTogglingVip] = useState(false);
 
   const fetchAdminData = async () => {
     setLoading(true);
@@ -57,6 +63,12 @@ export function AdminDashboardModal({
   useEffect(() => {
     fetchAdminData();
   }, []);
+
+  const handleSwitchVip = async () => {
+    setTogglingVip(true);
+    await onToggleVipSystem(!vipEnabled);
+    setTogglingVip(false);
+  };
 
   const now = new Date();
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
@@ -84,7 +96,6 @@ export function AdminDashboardModal({
   const completionRate =
     items.length > 0 ? Math.round((completedCount / items.length) * 100) : 0;
 
-  // 核准圖鑑入庫
   const handleApproveCatalog = async (catId: string) => {
     const { error } = await supabase
       .from('item_catalog')
@@ -97,7 +108,6 @@ export function AdminDashboardModal({
     }
   };
 
-  // 拒絕 / 移除圖鑑並實體刪除 Storage 檔案
   const handleDeleteCatalog = async (catItem: any) => {
     if (!confirm(`確定要從圖鑑庫移除「${catItem.item_name}」並刪除實體圖片檔嗎？`)) return;
     await removeUnusedStorageImages(supabase, [catItem.image_url], true);
@@ -183,6 +193,51 @@ export function AdminDashboardModal({
         </div>
 
         <div className="p-5 overflow-y-auto space-y-6">
+          {/* 👑 全站 VIP 制度總開關 */}
+          <div
+            className={`p-4 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+              vipEnabled
+                ? 'bg-amber-50/80 border-amber-300'
+                : 'bg-[#FFFDF7] border-[#E6D8C3]'
+            }`}
+          >
+            <div className="space-y-0.5">
+              <div className="flex items-center gap-1.5 font-bold text-sm">
+                <Crown className={`w-4 h-4 ${vipEnabled ? 'text-amber-500' : 'text-[#8C7B6B]'}`} />
+                <span>全站 VIP 島主贊助制度</span>
+                <span
+                  className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                    vipEnabled
+                      ? 'bg-emerald-600 text-white'
+                      : 'bg-gray-200 text-gray-600'
+                  }`}
+                >
+                  {vipEnabled ? '目前開放中' : '目前已關閉'}
+                </span>
+              </div>
+              <p className="text-xs text-[#6E6254]">
+                關閉時會隱藏全站 VIP 入口、置頂標籤與皇冠徽章，所有玩家統一每日 1 篇 / 保留 48h。
+              </p>
+            </div>
+
+            <button
+              type="button"
+              disabled={togglingVip}
+              onClick={handleSwitchVip}
+              className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap shrink-0 transition disabled:opacity-50 ${
+                vipEnabled
+                  ? 'bg-gray-700 hover:bg-gray-800 text-white'
+                  : 'bg-amber-500 hover:bg-amber-600 text-white shadow-xs'
+              }`}
+            >
+              {togglingVip
+                ? '切換中...'
+                : vipEnabled
+                ? '關閉 VIP 功能'
+                : '開啟 VIP 功能'}
+            </button>
+          </div>
+
           {/* 數據卡片 4 宮格 */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div className="p-4 rounded-2xl bg-[#FFFDF7] border border-[#F3E8D2]">
@@ -222,7 +277,7 @@ export function AdminDashboardModal({
             </div>
           </div>
 
-          {/* 🖼️ 共用圖鑑審核與 Storage 清理中心 */}
+          {/* 共用圖鑑審核與 Storage 清理中心 */}
           <div>
             <h3 className="font-bold text-sm mb-3 flex items-center gap-1.5">
               <BookOpenCheck className="w-4 h-4 text-[#F59E0B]" /> 共用圖鑑審核中心（待審核：
